@@ -9,6 +9,8 @@ from orgpulse.generators.base import date_series, is_holiday_dip, logistic_curve
 
 PROTOCOL_AMENDMENT_DAY: int = 120
 _AMENDMENT_BOOST: float = 1.6
+_AMENDMENT_RAMP_OFFSET: int = 20        # extra capacity centres ~20 days post-amendment
+_AMENDMENT_RAMP_STEEPNESS: float = 0.15
 
 
 def generate_clinical(
@@ -23,10 +25,25 @@ def generate_clinical(
         steepness = rng.uniform(0.05, 0.12)
         activation = int(rng.integers(0, 30))
 
-        # Amendment increases the ceiling (capacity), not just daily multiplier
-        cumulative_ideal_before = logistic_curve(days, ceiling, midpoint + activation, steepness)
-        boosted_ceiling = ceiling * _AMENDMENT_BOOST
-        cumulative_ideal_after = logistic_curve(days, boosted_ceiling, midpoint + activation, steepness)
+        base_curve = logistic_curve(days, ceiling, midpoint + activation, steepness)
+
+        # Protocol amendment adds NEW addressable capacity that ramps in over
+        # weeks AFTER day 120 (its own logistic, centred `_AMENDMENT_RAMP_OFFSET`
+        # days after the amendment and normalised to 0 at day 120). This yields a
+        # sustained multi-week surge, NOT a one-day cliff — a naive "switch to a
+        # higher-ceiling curve" dumps the whole capacity gap into a single day
+        # because the base curve is already saturated by day 120.
+        extra_ceiling = ceiling * (_AMENDMENT_BOOST - 1.0)
+        t = np.arange(days)
+        ramp_mid = PROTOCOL_AMENDMENT_DAY + _AMENDMENT_RAMP_OFFSET
+        s = 1.0 / (1.0 + np.exp(-_AMENDMENT_RAMP_STEEPNESS * (t - ramp_mid)))
+        s0 = 1.0 / (1.0 + np.exp(-_AMENDMENT_RAMP_STEEPNESS * (PROTOCOL_AMENDMENT_DAY - ramp_mid)))
+        extra_curve = np.where(
+            t >= PROTOCOL_AMENDMENT_DAY,
+            extra_ceiling * (s - s0) / (1.0 - s0),
+            0.0,
+        )
+        cumulative_ideal = base_curve + extra_curve
 
         prev_cum = 0.0
         cum = 0
@@ -34,14 +51,8 @@ def generate_clinical(
             if day_idx < activation:
                 daily = 0.0
             else:
-                # Use appropriate curve based on amendment date
-                if day_idx < PROTOCOL_AMENDMENT_DAY:
-                    target_cum = cumulative_ideal_before[day_idx]
-                else:
-                    target_cum = cumulative_ideal_after[day_idx]
-
-                inc = max(0.0, target_cum - prev_cum)
-                prev_cum = target_cum
+                inc = max(0.0, cumulative_ideal[day_idx] - prev_cum)
+                prev_cum = cumulative_ideal[day_idx]
                 daily = inc * is_holiday_dip(d)
                 daily += rng.normal(0, 0.5)  # measurement noise
             daily_int = int(max(0, round(daily)))

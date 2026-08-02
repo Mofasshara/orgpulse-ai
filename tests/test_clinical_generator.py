@@ -41,14 +41,19 @@ def test_site_zero_is_the_laggard():
     assert totals[0] < totals.median()
 
 
-def test_protocol_amendment_raises_enrollment():
-    # Compare a 30-day window before vs after the amendment, summed across sites.
+def test_protocol_amendment_is_a_sustained_surge():
+    # The amendment must (a) raise enrollment over a multi-week window AND
+    # (b) do so as a sustained surge, not a single-day cliff. A median/max guard
+    # is used so a lone outlier day cannot make the test pass.
     df = _df(days=200)
-    per_day = df.groupby("date")["daily_enrollment"].sum().sort_index()
-    amend_date = per_day.index[PROTOCOL_AMENDMENT_DAY]
-    before = per_day[per_day.index < amend_date].tail(30).mean()
-    after = per_day[per_day.index >= amend_date].head(30).mean()
-    assert after > before
+    per_day = (
+        df.groupby("date")["daily_enrollment"].sum().sort_index().reset_index(drop=True)
+    )
+    before = per_day.iloc[PROTOCOL_AMENDMENT_DAY - 30 : PROTOCOL_AMENDMENT_DAY].mean()
+    after_window = per_day.iloc[PROTOCOL_AMENDMENT_DAY : PROTOCOL_AMENDMENT_DAY + 40]
+    after = after_window.mean()
+    assert after > before                      # (a) amendment raises enrollment
+    assert after_window.max() < 4 * after      # (b) sustained surge, not a 1-day cliff
 
 
 def test_deterministic_given_seed():
