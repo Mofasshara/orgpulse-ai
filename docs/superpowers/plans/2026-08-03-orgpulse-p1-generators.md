@@ -474,9 +474,10 @@ def test_pass_rate_bounded_and_consistent():
 
 def test_calibration_offset_drifts_upward():
     df = _df(days=300)
-    early = df["calibration_offset"].head(50).abs().mean()
-    late = df["calibration_offset"].tail(50).abs().mean()
-    assert late > early
+    early = df["calibration_offset"].head(50).mean()
+    late = df["calibration_offset"].tail(50).mean()
+    assert late > early                          # signed upward drift, not just magnitude
+    assert df["calibration_offset"].iloc[-1] > 0
 
 
 def test_oos_events_present_and_nonnegative():
