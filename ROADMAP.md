@@ -10,14 +10,14 @@
 
 | Status       | Count |
 |--------------|-------|
-| ✅ Done       | 0     |
+| ✅ Done       | 2     |
 | 🔄 In Progress | 0   |
-| ⏳ Pending    | 34    |
+| ⏳ Pending    | 32    |
 | 🚫 Blocked    | 0     |
 
 **Total estimated time:** 75h (~9.4d)
-**Elapsed time:** —
-**Remaining estimate:** 75h (~9.4d)
+**Elapsed time:** 2h
+**Remaining estimate:** 73h (~9.1d)
 
 ---
 
@@ -50,8 +50,8 @@
 
 | # | Task | Status | Estimate | Started | Completed | Notes |
 |---|------|--------|----------|---------|-----------|-------|
-| 1 | Project scaffolding & OrgPulseConfig | ⏳ Pending | 1h | — | — | |
-| 2 | Shared generator primitives (clock, logistic, holiday dip) | ⏳ Pending | 1h | — | — | |
+| 1 | Project scaffolding & OrgPulseConfig | ✅ Done | 1h | 2026-08-03 00:00 | 2026-08-03 01:30 | |
+| 2 | Shared generator primitives (clock, logistic, holiday dip) | ✅ Done | 1h | 2026-08-03 01:30 | 2026-08-03 02:30 | |
 | 3 | Clinical-trial enrollment generator (hero) | ⏳ Pending | 3h | — | — | Injected: laggard site, amendment step, holiday dip |
 | 4 | QC/lab generator (calibration drift, OOS clusters) | ⏳ Pending | 2h | — | — | |
 | 5 | Supply-chain generator (sawtooth, spikes, seasonality) | ⏳ Pending | 2h | — | — | |
@@ -147,4 +147,6 @@
 
 > The roadmap above reflects the current plan. This log records every deviation from the original design — it is permanent and append-only.
 
-_No changes yet._
+| Date | Change | Reason | Impact | Original Plan |
+|------|--------|--------|--------|---------------|
+| 2026-08-03 02:10 | Clinical generator's protocol-amendment mechanism changed from "multiply daily rate ×1.6" to "raise enrollment ceiling ×1.6" | Plan defect found during Task 3: by the amendment day the logistic curve has plateaued, so daily increments are ~0 and multiplying stays ~0 — the intended post-amendment surge would not appear. Raising the ceiling re-opens a real surge and is more domain-accurate (amendment loosens inclusion criteria → larger addressable population). | Phase 1 Task 3 only; no interface/schema change, determinism preserved; plan doc + brief corrected to match. | Plan §Task 3 step-3 used `daily *= 1.6` after `PROTOCOL_AMENDMENT_DAY`. |

@@ -270,7 +270,7 @@ git commit -m "feat: shared generator primitives (date series, logistic curve, h
   - Injected structure the forecaster is NOT told about:
     - **Site 0 is a laggard** — its enrollment ceiling is ~35% of the others.
     - **Staggered activation** — each site starts enrolling at a random day offset in `[0, 30]`.
-    - **Protocol-amendment step** — from day `PROTOCOL_AMENDMENT_DAY = 120` onward, daily enrollment is boosted ×1.6 (an amendment loosened inclusion criteria).
+    - **Protocol-amendment step** — from day `PROTOCOL_AMENDMENT_DAY = 120` onward, the enrollment **ceiling** is raised ×1.6 (an amendment loosened inclusion criteria, increasing the addressable population). NB: raising the ceiling — not multiplying the daily rate — is what actually produces a visible post-amendment surge, because by day 120 the logistic curve has plateaued and daily increments are near zero; multiplying ~0 stays ~0.
     - **Holiday dip** — via `is_holiday_dip`.
   - Module constant `PROTOCOL_AMENDMENT_DAY: int = 120` is exported for later tests/analysis.
 
@@ -371,18 +371,25 @@ def generate_clinical(
         steepness = rng.uniform(0.05, 0.12)
         activation = int(rng.integers(0, 30))
 
-        cumulative_ideal = logistic_curve(days, ceiling, midpoint + activation, steepness)
+        # Amendment raises the enrollment CEILING (capacity), re-opening a real
+        # surge; multiplying the plateaued daily rate would not (see note above).
+        cumulative_ideal_before = logistic_curve(days, ceiling, midpoint + activation, steepness)
+        boosted_ceiling = ceiling * _AMENDMENT_BOOST
+        cumulative_ideal_after = logistic_curve(days, boosted_ceiling, midpoint + activation, steepness)
+
         prev_cum = 0.0
         cum = 0
         for day_idx, d in enumerate(dates):
             if day_idx < activation:
                 daily = 0.0
             else:
-                inc = max(0.0, cumulative_ideal[day_idx] - prev_cum)
-                prev_cum = cumulative_ideal[day_idx]
+                if day_idx < PROTOCOL_AMENDMENT_DAY:
+                    target_cum = cumulative_ideal_before[day_idx]
+                else:
+                    target_cum = cumulative_ideal_after[day_idx]
+                inc = max(0.0, target_cum - prev_cum)
+                prev_cum = target_cum
                 daily = inc * is_holiday_dip(d)
-                if day_idx >= PROTOCOL_AMENDMENT_DAY:
-                    daily *= _AMENDMENT_BOOST
                 daily += rng.normal(0, 0.5)  # measurement noise
             daily_int = int(max(0, round(daily)))
             cum += daily_int
@@ -404,7 +411,7 @@ def generate_clinical(
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/test_clinical_generator.py -v`
-Expected: PASS (6 tests). If `test_protocol_amendment_raises_enrollment` is flaky, the boost/noise ratio guarantees after>before in expectation; the seed is fixed so it is deterministic — do not add randomness to "fix" it.
+Expected: PASS (6 tests). The ceiling-raise mechanism yields ~2.2× higher enrollment in the 30-day post-amendment window vs. the 30-day pre-amendment window (before≈33/day, after≈74/day at seed 42), so `test_protocol_amendment_raises_enrollment` passes with wide margin. The seed is fixed — do not add randomness to "fix" any test.
 
 - [ ] **Step 5: Commit**
 
