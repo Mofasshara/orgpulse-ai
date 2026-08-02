@@ -36,7 +36,12 @@ def test_lead_time_has_floor_and_spikes():
 def test_reliability_bounded_and_seasonal():
     df = _df()
     assert df["supplier_reliability"].between(0, 1).all()
-    assert df["supplier_reliability"].max() - df["supplier_reliability"].min() > 0.05
+    # Genuine seasonality: reliability tracks the known annual sinusoid,
+    # not just "has spread" (which pure noise would also satisfy).
+    i = np.arange(len(df))
+    seasonal_signal = np.sin(2 * np.pi * i / 365.0)
+    corr = np.corrcoef(df["supplier_reliability"].to_numpy(), seasonal_signal)[0, 1]
+    assert corr > 0.5
 
 
 def test_deterministic_given_seed():
