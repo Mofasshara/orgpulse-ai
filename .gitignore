@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+
+# uv
+.uv/
+
+# OS
+.DS_Store
+
+# Prophet / cmdstan build artifacts
+*.stan
+*.hpp
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Local run scratch (committed run history lives under runs/, tracked deliberately)
+*.log
+.ipynb_checkpoints/
