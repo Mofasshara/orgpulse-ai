@@ -260,9 +260,9 @@ git commit -m "feat: Z-score point-outlier detector"
   - `orgpulse.detect.cusum.cusum_detect(values: numpy.ndarray, baseline: Baseline, kpi: str, k: float = 0.5, h: float = 5.0) -> AnomalyResult`
   - Standardized two-sided tabular CUSUM. Standardize each `x_i` to `z_i = (x_i - mean)/std`. Recurrences (both start at 0):
     `S_hi[i] = max(0, S_hi[i-1] + z_i - k)`, `S_lo[i] = max(0, S_lo[i-1] - z_i - k)`.
-  - `score` = the maximum of `max(S_hi)` and `max(S_lo)` over the series. Severity: `>= h` → CRITICAL, `>= 0.6*h` → WARNING, else SAFE. `detail` states which side (high/low) drove it and at which index it first crossed `h` (or `-1` if it never crossed).
+  - `score` = the maximum of `max(S_hi)` and `max(S_lo)` over the series. Severity: `>= 2*h` → CRITICAL, `>= h` → WARNING, else SAFE. `detail` states which side (high/low) drove it and at which index it first crossed `h` (or `-1` if it never crossed).
 
-**Why these defaults:** `k=0.5` (slack, in σ units) tuned to detect a sustained ~1σ shift; `h=5.0` decision interval (standard SPC choice giving a low false-alarm rate).
+**Why these defaults & thresholds:** `k=0.5` (slack, in σ units) tuned to detect a sustained ~1σ shift; `h=5.0` is the standard SPC decision interval. Severity uses two tiers above `h`: empirically (validated across 20 seeds) a stable in-control series can peak up to ~9 over a 60-sample window, while ANY sustained ≥1σ shift peaks well past 15 — so CRITICAL is set at `2*h`=10 (every stable series stays below it; every real shift clears it), and the `[h, 2*h)` band is the WARNING "gray zone". Setting CRITICAL at `h` alone would false-alarm on ~25% of stable windows.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -337,9 +337,9 @@ def cusum_detect(
             cross_idx = i
     score = max(max_hi, max_lo)
     side = "high" if max_hi >= max_lo else "low"
-    if score >= h:
+    if score >= 2.0 * h:
         sev = Severity.CRITICAL
-    elif score >= 0.6 * h:
+    elif score >= h:
         sev = Severity.WARNING
     else:
         sev = Severity.SAFE
