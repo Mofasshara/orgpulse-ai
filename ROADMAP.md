@@ -10,14 +10,14 @@
 
 | Status       | Count |
 |--------------|-------|
-| ✅ Done       | 10    |
+| ✅ Done       | 15    |
 | 🔄 In Progress | 0   |
-| ⏳ Pending    | 29    |
+| ⏳ Pending    | 24    |
 | 🚫 Blocked    | 0     |
 
 **Total estimated time:** 81h (~10.1d)
-**Elapsed time:** 18h (Phases 1–2 complete)
-**Remaining estimate:** 63h (~7.9d)
+**Elapsed time:** 24h (Phases 1–2.5 complete)
+**Remaining estimate:** 57h (~7.1d)
 
 ---
 
@@ -70,7 +70,7 @@
 | 3 | Isolation Forest detector (multivariate) | ✅ Done | 2h | 2026-08-03 03:45 | 2026-08-03 03:55 | Built; wiring into orchestrator deferred to Plan 4 |
 | 4 | Orchestrator + Safe/Warning/Critical zoning + generator integration tests | ✅ Done | 2h | 2026-08-03 03:55 | 2026-08-03 04:05 | Integration proves detectors catch injected breaks (margins 536/10, 57.8/10) |
 
-### Phase 2.5 — Hardening (Codex findings)  🔄
+### Phase 2.5 — Hardening (Codex findings)  ✅
 
 **Goal:** Fix must-fix defects from the Codex adversarial review so the foundation is trustworthy before forecasting. Mutation-resistant + multi-seed acceptance tests.
 **Phase estimate:** 6h
@@ -78,11 +78,11 @@
 
 | # | Task | Status | Estimate | Started | Completed | Notes |
 |---|------|--------|----------|---------|-----------|-------|
-| 1 | Data-quality guarding (finite/1-D validation; corrupt data → DATA_QUALITY, never SAFE) | ⏳ Pending | 1h | — | — | |
-| 2 | Clinical intensity/rate model (fixes inert holiday; keeps amendment surge) | ⏳ Pending | 2h | — | — | Poisson intensity; multi-seed holiday test |
-| 3 | CUSUM severity calibrated to window-length false-alarm target | ⏳ Pending | 2h | — | — | Monte-Carlo table + power/false-alarm acceptance tests |
-| 4 | Harden detection integration tests (assert direction; bound false-alarm rate) | ⏳ Pending | 0.5h | — | — | Mutation-resistant |
-| 5 | Hygiene: honest OOS label, CLI day bounds, pytest dev-group | ⏳ Pending | 0.5h | — | — | |
+| 1 | Data-quality guarding (finite/1-D validation; corrupt data → DATA_QUALITY, never SAFE) | ✅ Done | 1h | 2026-08-03 05:10 | 2026-08-03 05:25 | Fix-loop: corrupt-baseline SAFE-leak also closed |
+| 2 | Clinical intensity/rate model (fixes inert holiday; keeps amendment surge) | ✅ Done | 2h | 2026-08-03 05:25 | 2026-08-03 05:40 | Holiday now real (ratio 0.39); mutation-resistant |
+| 3 | CUSUM severity calibrated to window-length false-alarm target | ✅ Done | 2h | 2026-08-03 05:40 | 2026-08-03 05:55 | In-control CRIT 0.5–1.8%; power 99% |
+| 4 | Harden detection integration tests (assert direction; bound false-alarm rate) | ✅ Done | 0.5h | 2026-08-03 05:55 | 2026-08-03 06:05 | Fix-loop: pass_rate not calm → screen_fail_rate |
+| 5 | Hygiene: honest OOS label, CLI day bounds, pytest dev-group | ✅ Done | 0.5h | 2026-08-03 06:05 | 2026-08-03 06:15 | |
 
 ### Phase 3 — Forecasting (P3)  ⏳
 
