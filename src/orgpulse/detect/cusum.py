@@ -35,6 +35,7 @@ def _cusum_peak(z: np.ndarray, k: float, warn_ref: float) -> tuple[float, str, i
 
 
 def calibrated_thresholds(n_recent: int) -> tuple[float, float]:
+    """(warn, crit) peak thresholds for a recent-window length; interpolated from the hist=60 calibration table, clamped outside [20, 365]."""
     keys = sorted(_CALIB_TABLE)
     if n_recent <= keys[0]:
         return _CALIB_TABLE[keys[0]]
@@ -66,6 +67,14 @@ def simulate_incontrol_quantiles(
 def cusum_detect(
     values: np.ndarray, baseline: Baseline, kpi: str, k: float = 0.5
 ) -> AnomalyResult:
+    """Two-sided standardized CUSUM with severity calibrated to window length.
+
+    Severity thresholds achieve an in-control false-alarm target of ~1% CRITICAL /
+    ~10% WARNING. They are calibrated for a baseline of at least _MIN_BASELINE_N (60)
+    observations — shorter baselines return DATA_QUALITY — and for a recent-window
+    length in [20, 365]; beyond that range thresholds are clamped and false-alarm
+    control degrades. Returns DATA_QUALITY (never SAFE) on unusable baseline/params/data.
+    """
     def _dq(detail):
         return AnomalyResult(kpi=kpi, method="cusum", severity=Severity.DATA_QUALITY, score=None, flagged=True, detail=detail)
 

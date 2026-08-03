@@ -14,6 +14,11 @@ def test_calibration_table_matches_montecarlo():
         assert abs(warn - sim_warn) < 0.6 and abs(crit - sim_crit) < 0.6
 
 
+def test_thresholds_increase_with_window_length():
+    assert calibrated_thresholds(30)[1] < calibrated_thresholds(365)[1]
+    assert calibrated_thresholds(30)[0] < calibrated_thresholds(365)[0]
+
+
 def test_short_baseline_is_data_quality():
     b = Baseline(mean=50.0, std=2.0, n=_MIN_BASELINE_N - 1)
     assert cusum_detect(np.random.default_rng(0).normal(50, 2, 60), b, kpi="k").severity is Severity.DATA_QUALITY
