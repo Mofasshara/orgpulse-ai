@@ -8,7 +8,17 @@ import pandas as pd
 
 from orgpulse.forecast.types import Forecast
 
-logging.getLogger("cmdstanpy").setLevel(logging.ERROR)
+
+def _silence_prophet_logs() -> None:
+    # cmdstanpy attaches its own stderr handler on import and ignores setLevel;
+    # clearing the handlers + NullHandler is what actually suppresses the
+    # "Chain [1] start processing" INFO spam (verified). Must run AFTER Prophet
+    # is imported (it is imported lazily inside forecast_kpi).
+    lg = logging.getLogger("cmdstanpy")
+    lg.handlers.clear()
+    lg.addHandler(logging.NullHandler())
+    lg.propagate = False
+    lg.setLevel(logging.WARNING)
 
 
 def series_from_generator(df: pd.DataFrame, date_col: str, value_col: str) -> pd.DataFrame:
@@ -23,6 +33,7 @@ def forecast_kpi(history: pd.DataFrame, kpi: str, horizons=(30, 60, 90), interva
     if not np.all(np.isfinite(y)):
         raise ValueError("history y contains non-finite values")
     from prophet import Prophet
+    _silence_prophet_logs()
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")

@@ -22,8 +22,8 @@ def test_backtest_returns_finite_plausible_metrics():
     assert np.isfinite(r.mase) and 0 < r.mase < 5            # honest: ~1.4 (does NOT beat naive)
 
 
-def test_backtest_uses_only_past_data_per_fold():
-    # Determinism + no-leakage sanity: same series -> same metrics.
+def test_backtest_is_deterministic():
+    # Determinism / regression check: same series -> same metrics.
     a = rolling_origin_backtest(_series(), horizon=30, n_folds=3)
     b = rolling_origin_backtest(_series(), horizon=30, n_folds=3)
     assert abs(a.mape - b.mape) < 1e-6 and abs(a.mase - b.mase) < 1e-6

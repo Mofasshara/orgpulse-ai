@@ -21,7 +21,7 @@ def rolling_origin_backtest(
         fc = forecast_kpi(train, kpi="backtest", horizons=(horizon,), interval_width=interval_width)
         pred = fc.frame["yhat"].to_numpy()[:horizon]
         actual = series["y"].to_numpy()[c : c + horizon]
-        scale = float(np.mean(np.abs(np.diff(train["y"].to_numpy()))))
+        scale = float(max(np.mean(np.abs(np.diff(train["y"].to_numpy()))), 1e-9))
         mapes.append(float(np.mean(np.abs((actual - pred) / np.maximum(actual, 1.0))) * 100))
         mases.append(float(np.mean(np.abs(actual - pred)) / scale))
     return BacktestResult(

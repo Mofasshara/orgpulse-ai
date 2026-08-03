@@ -43,6 +43,7 @@ def interval_calibration(
     upper = np.concatenate(upper_all)
 
     raw_cov = float(np.mean((actual >= lower) & (actual <= upper)))
+    # NB: ratio uses a symmetric half-width; the widened bounds use per-side widths — equivalent for Prophet's near-symmetric intervals.
     half = np.maximum((upper - lower) / 2.0, 1e-9)
     ratio = np.abs(actual - yhat) / half
     scale = float(max(1.0, np.quantile(ratio, nominal)))
