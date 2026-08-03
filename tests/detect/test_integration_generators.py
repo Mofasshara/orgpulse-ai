@@ -34,13 +34,15 @@ def test_detects_clinical_amendment_surge_upward():
     assert "high" in cusum.detail                    # detector saw an upward shift
 
 
-def test_calm_qc_pass_rate_false_alarm_rate_is_bounded():
-    # Not a single lucky seed: over many seeds a calm stretch must rarely CRITICAL.
+def test_stable_clinical_kpi_has_bounded_false_alarm_rate():
+    # QC pass_rate is NOT calm (it declines with calibration drift), so it is a real
+    # signal, not a false-alarm control. screen_fail_rate is genuinely iid/stationary,
+    # so a benign stable KPI must rarely CRITICAL.
     crit = 0
     N = 200
     for s in range(N):
-        df = generate_qc(date(2026, 1, 1), 200, make_rng(s))
-        series = df["pass_rate"].to_numpy()
-        sev = overall_severity(detect_kpi(series[:120], series[120:150], kpi="pass_rate"))
+        df = generate_clinical(date(2026, 1, 1), 200, make_rng(s))
+        series = df.groupby("date")["screen_fail_rate"].mean().to_numpy()
+        sev = overall_severity(detect_kpi(series[:120], series[120:150], kpi="screen_fail_rate"))
         crit += sev is Severity.CRITICAL
-    assert crit / N <= 0.05                          # bounded false-alarm rate
+    assert crit / N <= 0.05
