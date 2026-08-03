@@ -10,14 +10,14 @@
 
 | Status       | Count |
 |--------------|-------|
-| ✅ Done       | 15    |
+| ✅ Done       | 20    |
 | 🔄 In Progress | 0   |
-| ⏳ Pending    | 29    |
+| ⏳ Pending    | 24    |
 | 🚫 Blocked    | 0     |
 
 **Total estimated time:** 86h (~10.8d)
-**Elapsed time:** 24h (Phases 1–2.5 complete)
-**Remaining estimate:** 62h (~7.8d)
+**Elapsed time:** 29h (Phases 1–2.6 complete)
+**Remaining estimate:** 57h (~7.1d)
 
 ---
 
@@ -84,7 +84,7 @@
 | 4 | Harden detection integration tests (assert direction; bound false-alarm rate) | ✅ Done | 0.5h | 2026-08-03 05:55 | 2026-08-03 06:05 | Fix-loop: pass_rate not calm → screen_fail_rate |
 | 5 | Hygiene: honest OOS label, CLI day bounds, pytest dev-group | ✅ Done | 0.5h | 2026-08-03 06:05 | 2026-08-03 06:15 | |
 
-### Phase 2.6 — Robustness Completion (Codex round 2)  🔄
+### Phase 2.6 — Robustness Completion (Codex round 2)  ✅
 
 **Goal:** Close the "bad data never SAFE / never crashes" contract completely + make CUSUM false-alarm calibration valid for any usable baseline. All gaps Codex-found + controller-verified.
 **Phase estimate:** 5h
@@ -92,11 +92,11 @@
 
 | # | Task | Status | Estimate | Started | Completed | Notes |
 |---|------|--------|----------|---------|-----------|-------|
-| 1 | Scalar-detector DQ contract (n≥1, param+overflow guards, score None) | ⏳ Pending | 1h | — | — | |
-| 2 | detect_kpi validates history/recent; empty results → DATA_QUALITY | ⏳ Pending | 0.5h | — | — | Codex BLOCK |
-| 3 | CUSUM min baseline + recalibrate at worst-case + window-dependency spy test | ⏳ Pending | 2h | — | — | n=5 gave 46% false-alarm |
-| 4 | Isolation Forest finite/shape validation → DATA_QUALITY | ⏳ Pending | 0.5h | — | — | |
-| 5 | Generator arg validation + honest OOS relabel + dedupe dev deps | ⏳ Pending | 1h | — | — | |
+| 1 | Scalar-detector DQ contract (n≥1, param+overflow guards, score None) | ✅ Done | 1h | 2026-08-03 06:40 | 2026-08-03 06:50 | JSON-serializable DATA_QUALITY |
+| 2 | detect_kpi validates history/recent; empty results → DATA_QUALITY | ✅ Done | 0.5h | 2026-08-03 06:50 | 2026-08-03 06:58 | Codex BLOCK closed; never raises |
+| 3 | CUSUM min baseline + recalibrate at worst-case + window-dependency spy test | ✅ Done | 2h | 2026-08-03 06:58 | 2026-08-03 07:15 | n=5→DATA_QUALITY; false-alarm 0.5–1.2% across windows |
+| 4 | Isolation Forest finite/shape validation → DATA_QUALITY | ✅ Done | 0.5h | 2026-08-03 07:15 | 2026-08-03 07:22 | jagged/param edge → Plan 4 |
+| 5 | Generator arg validation + honest OOS relabel + dedupe dev deps | ✅ Done | 1h | 2026-08-03 07:22 | 2026-08-03 07:35 | |
 
 ### Phase 3 — Forecasting (P3)  ⏳
 
