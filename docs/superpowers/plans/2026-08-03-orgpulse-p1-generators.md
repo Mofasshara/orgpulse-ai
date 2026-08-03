@@ -4,7 +4,7 @@
 
 **Goal:** Build the project scaffolding and three synthetic pharma-ops data generators (clinical trials [hero], QC/lab, supply chain), exposed via an `orgpulse generate` CLI, with tests that prove each stream's deliberately-injected structural features are present.
 
-**Architecture:** A `src/orgpulse` Python package. Generators are pure functions returning `pandas.DataFrame`s seeded by a shared `numpy.random.Generator` for reproducibility. Each generator owns one stream and injects realistic structure (staggered logistic enrollment + protocol-amendment step + holiday dip + a laggard site; QC calibration drift + OOS clusters; supply sawtooth + lead-time spikes + seasonality). A Typer CLI writes the streams to a dated output directory. No detection/forecasting/LLM here — this plan is the data foundation only.
+**Architecture:** A `src/orgpulse` Python package. Generators are pure functions returning `pandas.DataFrame`s seeded by a shared `numpy.random.Generator` for reproducibility. Each generator owns one stream and injects realistic structure (staggered logistic enrollment + protocol-amendment step + holiday dip + a laggard site; QC calibration drift + drift-dependent OOS incidence; supply sawtooth + lead-time spikes + seasonality). A Typer CLI writes the streams to a dated output directory. No detection/forecasting/LLM here — this plan is the data foundation only.
 
 **Tech Stack:** Python 3.11, uv, numpy, pandas, Typer, pytest.
 
@@ -454,7 +454,7 @@ git commit -m "feat: clinical-trial enrollment generator with injected structura
     `pass_rate` (float in [0,1]), `oos_events` (int ≥ 0),
     `calibration_offset` (float, slowly drifting upward — the CUSUM target).
   - Injected structure: `calibration_offset` is a cumulative random-walk with positive drift
-    (equipment slowly de-calibrating); OOS events are rare Poisson counts that cluster.
+    (equipment slowly de-calibrating); OOS events show drift-dependent incidence (Poisson rate rises with miscalibration).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -540,7 +540,7 @@ def generate_qc(start_date: date, days: int, rng: np.random.Generator) -> pd.Dat
         base_pass = 0.985 - min(0.15, abs(calibration_offset[i]) * 0.05)
         batches_passed = int(rng.binomial(batches_tested, np.clip(base_pass, 0, 1)))
         pass_rate = batches_passed / batches_tested
-        # OOS events: rare, and more likely when miscalibrated (clustering).
+        # drift-dependent OOS incidence: Poisson rate rises with |calibration_offset| (not an explicit burst/cluster process)
         oos_lambda = 0.05 + abs(calibration_offset[i]) * 0.1
         oos_events = int(rng.poisson(oos_lambda))
         rows.append(

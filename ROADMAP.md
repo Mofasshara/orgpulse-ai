@@ -53,7 +53,7 @@
 | 1 | Project scaffolding & OrgPulseConfig | ✅ Done | 1h | 2026-08-03 00:00 | 2026-08-03 01:30 | |
 | 2 | Shared generator primitives (clock, logistic, holiday dip) | ✅ Done | 1h | 2026-08-03 01:30 | 2026-08-03 02:30 | |
 | 3 | Clinical-trial enrollment generator (hero) | ✅ Done | 3h | 2026-08-03 02:30 | 2026-08-03 03:10 | Amendment redesigned twice (multiplier→ceiling→ramp-in surge); sustained surge, cliff-guarded test |
-| 4 | QC/lab generator (calibration drift, OOS clusters) | ✅ Done | 2h | 2026-08-03 02:40 | 2026-08-03 02:55 | Signed-drift test strengthened |
+| 4 | QC/lab generator (calibration drift, drift-dependent OOS incidence) | ✅ Done | 2h | 2026-08-03 02:40 | 2026-08-03 02:55 | Signed-drift test strengthened |
 | 5 | Supply-chain generator (sawtooth, spikes, seasonality) | ✅ Done | 2h | 2026-08-03 02:55 | 2026-08-03 03:05 | Seasonality test hardened (correlation) |
 | 6 | `orgpulse generate` CLI | ✅ Done | 1h | 2026-08-03 03:05 | 2026-08-03 03:15 | 24/24 suite green; smoke run OK |
 

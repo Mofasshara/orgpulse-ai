@@ -12,6 +12,8 @@ _REORDER_QTY: int = 600
 
 
 def generate_supply(start_date: date, days: int, rng: np.random.Generator) -> pd.DataFrame:
+    if days < 1:
+        raise ValueError("days must be >= 1")
     dates = date_series(start_date, days)
     inventory = 500
     rows = []

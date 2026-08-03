@@ -9,6 +9,8 @@ from orgpulse.generators.base import date_series
 
 
 def generate_qc(start_date: date, days: int, rng: np.random.Generator) -> pd.DataFrame:
+    if days < 1:
+        raise ValueError("days must be >= 1")
     dates = date_series(start_date, days)
     # Calibration offset: random walk with small positive drift (slow de-calibration).
     drift = 0.004
