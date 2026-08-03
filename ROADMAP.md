@@ -10,14 +10,14 @@
 
 | Status       | Count |
 |--------------|-------|
-| ✅ Done       | 0     |
+| ✅ Done       | 6     |
 | 🔄 In Progress | 0   |
-| ⏳ Pending    | 34    |
+| ⏳ Pending    | 28    |
 | 🚫 Blocked    | 0     |
 
 **Total estimated time:** 75h (~9.4d)
-**Elapsed time:** —
-**Remaining estimate:** 75h (~9.4d)
+**Elapsed time:** 10h (Phase 1 complete)
+**Remaining estimate:** 65h (~8.1d)
 
 ---
 
@@ -42,7 +42,7 @@
 
 ## Phases
 
-### Phase 1 — Scaffolding & Synthetic Generators (P0+P1)  ⏳
+### Phase 1 — Scaffolding & Synthetic Generators (P0+P1)  ✅
 
 **Goal:** `orgpulse generate` produces realistic 3-stream data; tests prove injected structural breaks land where intended.
 **Phase estimate:** 10h
@@ -50,12 +50,12 @@
 
 | # | Task | Status | Estimate | Started | Completed | Notes |
 |---|------|--------|----------|---------|-----------|-------|
-| 1 | Project scaffolding & OrgPulseConfig | ⏳ Pending | 1h | — | — | |
-| 2 | Shared generator primitives (clock, logistic, holiday dip) | ⏳ Pending | 1h | — | — | |
-| 3 | Clinical-trial enrollment generator (hero) | ⏳ Pending | 3h | — | — | Injected: laggard site, amendment step, holiday dip |
-| 4 | QC/lab generator (calibration drift, OOS clusters) | ⏳ Pending | 2h | — | — | |
-| 5 | Supply-chain generator (sawtooth, spikes, seasonality) | ⏳ Pending | 2h | — | — | |
-| 6 | `orgpulse generate` CLI | ⏳ Pending | 1h | — | — | |
+| 1 | Project scaffolding & OrgPulseConfig | ✅ Done | 1h | 2026-08-03 00:00 | 2026-08-03 01:30 | |
+| 2 | Shared generator primitives (clock, logistic, holiday dip) | ✅ Done | 1h | 2026-08-03 01:30 | 2026-08-03 02:30 | |
+| 3 | Clinical-trial enrollment generator (hero) | ✅ Done | 3h | 2026-08-03 02:30 | 2026-08-03 03:10 | Amendment redesigned twice (multiplier→ceiling→ramp-in surge); sustained surge, cliff-guarded test |
+| 4 | QC/lab generator (calibration drift, OOS clusters) | ✅ Done | 2h | 2026-08-03 02:40 | 2026-08-03 02:55 | Signed-drift test strengthened |
+| 5 | Supply-chain generator (sawtooth, spikes, seasonality) | ✅ Done | 2h | 2026-08-03 02:55 | 2026-08-03 03:05 | Seasonality test hardened (correlation) |
+| 6 | `orgpulse generate` CLI | ✅ Done | 1h | 2026-08-03 03:05 | 2026-08-03 03:15 | 24/24 suite green; smoke run OK |
 
 ### Phase 2 — Anomaly Detection (P2)  ⏳
 
@@ -147,4 +147,7 @@
 
 > The roadmap above reflects the current plan. This log records every deviation from the original design — it is permanent and append-only.
 
-_No changes yet._
+| Date | Change | Reason | Impact | Original Plan |
+|------|--------|--------|--------|---------------|
+| 2026-08-03 02:10 | Clinical generator's protocol-amendment mechanism changed from "multiply daily rate ×1.6" to "raise enrollment ceiling ×1.6" | Plan defect found during Task 3: by the amendment day the logistic curve has plateaued, so daily increments are ~0 and multiplying stays ~0 — the intended post-amendment surge would not appear. Raising the ceiling re-opens a real surge and is more domain-accurate (amendment loosens inclusion criteria → larger addressable population). | Phase 1 Task 3 only; no interface/schema change, determinism preserved; plan doc + brief corrected to match. | Plan §Task 3 step-3 used `daily *= 1.6` after `PROTOCOL_AMENDMENT_DAY`. |
+| 2026-08-03 03:05 | Amendment mechanism redesigned again: from "switch to higher-ceiling curve" to "new capacity ramps in over weeks via its own logistic"; amendment test hardened with a `max < 4×mean` cliff-guard | Final whole-branch review found the ceiling-switch dumped the entire capacity gap into a single 1,937-patient cliff day, and the 30-day-mean test passed only because that one outlier dominated the window — a luck-passing test on the hero feature. Redesign (not another patch) per root-cause policy; validated across seeds 42/7/123/2024 (sustained ~2× surge, busiest day ~1.6× window mean). | Phase 1 Task 3 only; no interface/schema change, determinism preserved; plan doc + brief + test corrected. | Plan §Task 3 used two logistic curves switched at day 120; test compared 30-day before/after means only. |

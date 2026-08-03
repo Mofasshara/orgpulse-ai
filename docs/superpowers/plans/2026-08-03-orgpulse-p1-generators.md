@@ -270,7 +270,7 @@ git commit -m "feat: shared generator primitives (date series, logistic curve, h
   - Injected structure the forecaster is NOT told about:
     - **Site 0 is a laggard** — its enrollment ceiling is ~35% of the others.
     - **Staggered activation** — each site starts enrolling at a random day offset in `[0, 30]`.
-    - **Protocol-amendment step** — from day `PROTOCOL_AMENDMENT_DAY = 120` onward, daily enrollment is boosted ×1.6 (an amendment loosened inclusion criteria).
+    - **Protocol-amendment surge** — from day `PROTOCOL_AMENDMENT_DAY = 120`, an amendment loosens inclusion criteria, adding `(_AMENDMENT_BOOST − 1)×ceiling` of **new addressable capacity** that ramps in over several weeks via its own logistic (centred `_AMENDMENT_RAMP_OFFSET` days later, normalised to 0 at day 120). This produces a **sustained multi-week surge**. NB: two naive alternatives are wrong — multiplying the daily rate does nothing (the base curve has plateaued by day 120, so ~0×1.6≈0), and switching to a higher-ceiling curve dumps the entire capacity gap into a single cliff day. The ramp-in-capacity model is the correct one.
     - **Holiday dip** — via `is_holiday_dip`.
   - Module constant `PROTOCOL_AMENDMENT_DAY: int = 120` is exported for later tests/analysis.
 
@@ -321,14 +321,19 @@ def test_site_zero_is_the_laggard():
     assert totals[0] < totals.median()
 
 
-def test_protocol_amendment_raises_enrollment():
-    # Compare a 30-day window before vs after the amendment, summed across sites.
+def test_protocol_amendment_is_a_sustained_surge():
+    # The amendment must (a) raise enrollment over a multi-week window AND
+    # (b) do so as a sustained surge, not a single-day cliff. A median/max guard
+    # is used so a lone outlier day cannot make the test pass.
     df = _df(days=200)
-    per_day = df.groupby("date")["daily_enrollment"].sum().sort_index()
-    amend_date = per_day.index[PROTOCOL_AMENDMENT_DAY]
-    before = per_day[per_day.index < amend_date].tail(30).mean()
-    after = per_day[per_day.index >= amend_date].head(30).mean()
-    assert after > before
+    per_day = (
+        df.groupby("date")["daily_enrollment"].sum().sort_index().reset_index(drop=True)
+    )
+    before = per_day.iloc[PROTOCOL_AMENDMENT_DAY - 30 : PROTOCOL_AMENDMENT_DAY].mean()
+    after_window = per_day.iloc[PROTOCOL_AMENDMENT_DAY : PROTOCOL_AMENDMENT_DAY + 40]
+    after = after_window.mean()
+    assert after > before                      # (a) amendment raises enrollment
+    assert after_window.max() < 4 * after      # (b) sustained surge, not a 1-day cliff
 
 
 def test_deterministic_given_seed():
@@ -357,6 +362,8 @@ from orgpulse.generators.base import date_series, is_holiday_dip, logistic_curve
 
 PROTOCOL_AMENDMENT_DAY: int = 120
 _AMENDMENT_BOOST: float = 1.6
+_AMENDMENT_RAMP_OFFSET: int = 20        # extra capacity centres ~20 days post-amendment
+_AMENDMENT_RAMP_STEEPNESS: float = 0.15
 
 
 def generate_clinical(
@@ -371,7 +378,26 @@ def generate_clinical(
         steepness = rng.uniform(0.05, 0.12)
         activation = int(rng.integers(0, 30))
 
-        cumulative_ideal = logistic_curve(days, ceiling, midpoint + activation, steepness)
+        base_curve = logistic_curve(days, ceiling, midpoint + activation, steepness)
+
+        # Protocol amendment adds NEW addressable capacity that ramps in over
+        # weeks AFTER day 120 (its own logistic, centred `_AMENDMENT_RAMP_OFFSET`
+        # days after the amendment and normalised to 0 at day 120). This yields a
+        # sustained multi-week surge, NOT a one-day cliff — a naive "switch to a
+        # higher-ceiling curve" dumps the whole capacity gap into a single day
+        # because the base curve is already saturated by day 120.
+        extra_ceiling = ceiling * (_AMENDMENT_BOOST - 1.0)
+        t = np.arange(days)
+        ramp_mid = PROTOCOL_AMENDMENT_DAY + _AMENDMENT_RAMP_OFFSET
+        s = 1.0 / (1.0 + np.exp(-_AMENDMENT_RAMP_STEEPNESS * (t - ramp_mid)))
+        s0 = 1.0 / (1.0 + np.exp(-_AMENDMENT_RAMP_STEEPNESS * (PROTOCOL_AMENDMENT_DAY - ramp_mid)))
+        extra_curve = np.where(
+            t >= PROTOCOL_AMENDMENT_DAY,
+            extra_ceiling * (s - s0) / (1.0 - s0),
+            0.0,
+        )
+        cumulative_ideal = base_curve + extra_curve
+
         prev_cum = 0.0
         cum = 0
         for day_idx, d in enumerate(dates):
@@ -381,8 +407,6 @@ def generate_clinical(
                 inc = max(0.0, cumulative_ideal[day_idx] - prev_cum)
                 prev_cum = cumulative_ideal[day_idx]
                 daily = inc * is_holiday_dip(d)
-                if day_idx >= PROTOCOL_AMENDMENT_DAY:
-                    daily *= _AMENDMENT_BOOST
                 daily += rng.normal(0, 0.5)  # measurement noise
             daily_int = int(max(0, round(daily)))
             cum += daily_int
@@ -404,7 +428,7 @@ def generate_clinical(
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/test_clinical_generator.py -v`
-Expected: PASS (6 tests). If `test_protocol_amendment_raises_enrollment` is flaky, the boost/noise ratio guarantees after>before in expectation; the seed is fixed so it is deterministic — do not add randomness to "fix" it.
+Expected: PASS (6 tests). The ramp-in-capacity mechanism yields ~2× higher enrollment in the 40-day post-amendment window vs. the 30-day pre-amendment window (before≈26/day, after≈54/day at seed 42), delivered as a sustained surge: the busiest single day is only ~1.6× the window mean (validated across seeds 42/7/123/2024), so `test_protocol_amendment_is_a_sustained_surge`'s `max < 4×mean` cliff-guard passes comfortably while a one-day-cliff implementation would fail it. The seed is fixed — do not add randomness to "fix" any test.
 
 - [ ] **Step 5: Commit**
 
@@ -467,9 +491,10 @@ def test_pass_rate_bounded_and_consistent():
 
 def test_calibration_offset_drifts_upward():
     df = _df(days=300)
-    early = df["calibration_offset"].head(50).abs().mean()
-    late = df["calibration_offset"].tail(50).abs().mean()
-    assert late > early
+    early = df["calibration_offset"].head(50).mean()
+    late = df["calibration_offset"].tail(50).mean()
+    assert late > early                          # signed upward drift, not just magnitude
+    assert df["calibration_offset"].iloc[-1] > 0
 
 
 def test_oos_events_present_and_nonnegative():
@@ -607,7 +632,12 @@ def test_lead_time_has_floor_and_spikes():
 def test_reliability_bounded_and_seasonal():
     df = _df()
     assert df["supplier_reliability"].between(0, 1).all()
-    assert df["supplier_reliability"].max() - df["supplier_reliability"].min() > 0.05
+    # Genuine seasonality: reliability tracks the known annual sinusoid,
+    # not just "has spread" (which pure noise would also satisfy).
+    i = np.arange(len(df))
+    seasonal_signal = np.sin(2 * np.pi * i / 365.0)
+    corr = np.corrcoef(df["supplier_reliability"].to_numpy(), seasonal_signal)[0, 1]
+    assert corr > 0.5
 
 
 def test_deterministic_given_seed():
