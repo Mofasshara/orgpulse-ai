@@ -1,7 +1,5 @@
 from datetime import date
 
-import numpy as np
-
 from orgpulse.config import make_rng
 from orgpulse.generators.clinical import generate_clinical, PROTOCOL_AMENDMENT_DAY
 from orgpulse.generators.qc import generate_qc

@@ -13,6 +13,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
 [project.scripts]
 orgpulse = "orgpulse.cli:app"
 

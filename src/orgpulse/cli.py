@@ -20,6 +20,8 @@ def main_callback():
 
 
 def write_streams(out: Path, days: int, seed: int) -> dict[str, Path]:
+    if days < 1:
+        raise ValueError("days must be >= 1")
     out.mkdir(parents=True, exist_ok=True)
     start = date(2026, 1, 1)
     frames = {
@@ -37,7 +39,7 @@ def write_streams(out: Path, days: int, seed: int) -> dict[str, Path]:
 
 @app.command()
 def generate(
-    days: int = typer.Option(365, help="Number of days to generate"),
+    days: int = typer.Option(365, min=1, help="Number of days to generate"),
     seed: int = typer.Option(42, help="Random seed"),
     out: str = typer.Option("data", help="Output directory"),
 ) -> None:
