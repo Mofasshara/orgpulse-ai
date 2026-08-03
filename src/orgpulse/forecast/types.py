@@ -30,3 +30,12 @@ class BacktestResult:
     mase: float
     per_fold_mape: tuple[float, ...]
     per_fold_mase: tuple[float, ...]
+
+
+@dataclass(frozen=True)
+class CalibrationResult:
+    nominal: float
+    raw_coverage: float
+    scale_factor: float
+    adjusted_coverage: float
+    n_points: int
