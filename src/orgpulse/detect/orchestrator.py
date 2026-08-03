@@ -11,6 +11,9 @@ from orgpulse.detect.zscore import zscore_detect
 def detect_kpi(history: np.ndarray, recent: np.ndarray, kpi: str) -> list[AnomalyResult]:
     baseline = fit_baseline(np.asarray(history, dtype=float))
     recent = np.asarray(recent, dtype=float)
+    if recent.size == 0:
+        return [AnomalyResult(kpi=kpi, method="zscore", severity=Severity.DATA_QUALITY,
+                              score=float("nan"), flagged=True, detail="empty recent data")]
     return [
         zscore_detect(float(recent[-1]), baseline, kpi=kpi),
         cusum_detect(recent, baseline, kpi=kpi),
@@ -20,4 +23,6 @@ def detect_kpi(history: np.ndarray, recent: np.ndarray, kpi: str) -> list[Anomal
 def overall_severity(results: list[AnomalyResult]) -> Severity:
     if not results:
         return Severity.SAFE
+    if any(r.severity is Severity.DATA_QUALITY for r in results):
+        return Severity.DATA_QUALITY
     return max(r.severity for r in results)

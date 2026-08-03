@@ -103,7 +103,7 @@ Three daily time-series generators. Each Hermes run advances a clock and ingests
   per-site performance. Deliberately seeded with real-world structure the
   forecaster is *not* told about: a protocol-amendment step change, a holiday
   enrollment dip, and one chronically underperforming site.
-- **QC/lab (solid):** batch pass/fail rate, OOS (out-of-spec) event clusters,
+- **QC/lab (solid):** batch pass/fail rate, drift-dependent OOS (out-of-spec) incidence,
   equipment calibration **drift** (slow mean shift — the CUSUM case).
 - **Supply chain (solid):** inventory sawtooth, supplier lead-time spikes,
   supplier reliability seasonality.

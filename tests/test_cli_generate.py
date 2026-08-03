@@ -22,3 +22,9 @@ def test_cli_generate_runs(tmp_path: Path):
     assert (tmp_path / "clinical.csv").exists()
     assert (tmp_path / "qc.csv").exists()
     assert (tmp_path / "supply.csv").exists()
+
+
+def test_generate_rejects_nonpositive_days(tmp_path: Path):
+    runner = CliRunner()
+    result = runner.invoke(app, ["generate", "--days", "0", "--out", str(tmp_path)])
+    assert result.exit_code != 0  # clean failure, not a KeyError traceback

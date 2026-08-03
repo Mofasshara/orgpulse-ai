@@ -22,7 +22,7 @@ def generate_qc(start_date: date, days: int, rng: np.random.Generator) -> pd.Dat
         base_pass = 0.985 - min(0.15, abs(calibration_offset[i]) * 0.05)
         batches_passed = int(rng.binomial(batches_tested, np.clip(base_pass, 0, 1)))
         pass_rate = batches_passed / batches_tested
-        # OOS events: rare, and more likely when miscalibrated (clustering).
+        # drift-dependent OOS incidence: Poisson rate rises with |calibration_offset| (not an explicit burst/cluster process)
         oos_lambda = 0.05 + abs(calibration_offset[i]) * 0.1
         oos_events = int(rng.poisson(oos_lambda))
         rows.append(
