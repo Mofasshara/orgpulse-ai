@@ -10,14 +10,14 @@
 
 | Status       | Count |
 |--------------|-------|
-| ✅ Done       | 6     |
+| ✅ Done       | 10    |
 | 🔄 In Progress | 0   |
-| ⏳ Pending    | 28    |
+| ⏳ Pending    | 24    |
 | 🚫 Blocked    | 0     |
 
 **Total estimated time:** 75h (~9.4d)
-**Elapsed time:** 10h (Phase 1 complete)
-**Remaining estimate:** 65h (~8.1d)
+**Elapsed time:** 18h (Phases 1–2 complete)
+**Remaining estimate:** 57h (~7.1d)
 
 ---
 
@@ -57,17 +57,18 @@
 | 5 | Supply-chain generator (sawtooth, spikes, seasonality) | ✅ Done | 2h | 2026-08-03 02:55 | 2026-08-03 03:05 | Seasonality test hardened (correlation) |
 | 6 | `orgpulse generate` CLI | ✅ Done | 1h | 2026-08-03 03:05 | 2026-08-03 03:15 | 24/24 suite green; smoke run OK |
 
-### Phase 2 — Anomaly Detection (P2)  ⏳
+### Phase 2 — Anomaly Detection (P2)  ✅
 
 **Goal:** Statistical + ML anomaly detection against remembered baselines, with Safe/Warning/Critical zoning.
 **Phase estimate:** 8h
+**Plan:** `docs/superpowers/plans/2026-08-03-orgpulse-p2-detection.md`
 
 | # | Task | Status | Estimate | Started | Completed | Notes |
 |---|------|--------|----------|---------|-----------|-------|
-| 1 | CUSUM detector (drift/shift) | ⏳ Pending | 3h | — | — | |
-| 2 | Z-score detector (point outliers) | ⏳ Pending | 1h | — | — | |
-| 3 | Isolation Forest detector (multivariate) | ⏳ Pending | 2h | — | — | |
-| 4 | Safe/Warning/Critical zoning + baseline compare | ⏳ Pending | 2h | — | — | |
+| 1 | Detection types + Baseline; Z-score detector | ✅ Done | 2h | 2026-08-03 03:20 | 2026-08-03 03:35 | Severity IntEnum, AnomalyResult |
+| 2 | CUSUM detector (drift/shift) | ✅ Done | 3h | 2026-08-03 03:35 | 2026-08-03 03:45 | Thresholds corrected to 2h/h (20-seed validated) |
+| 3 | Isolation Forest detector (multivariate) | ✅ Done | 2h | 2026-08-03 03:45 | 2026-08-03 03:55 | Built; wiring into orchestrator deferred to Plan 4 |
+| 4 | Orchestrator + Safe/Warning/Critical zoning + generator integration tests | ✅ Done | 2h | 2026-08-03 03:55 | 2026-08-03 04:05 | Integration proves detectors catch injected breaks (margins 536/10, 57.8/10) |
 
 ### Phase 3 — Forecasting (P3)  ⏳
 
