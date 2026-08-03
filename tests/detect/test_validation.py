@@ -44,3 +44,13 @@ def test_overall_severity_data_quality_dominates():
     dq = AnomalyResult("k", "zscore", Severity.DATA_QUALITY, float("nan"), True, "")
     safe = AnomalyResult("k", "cusum", Severity.SAFE, 0.0, False, "")
     assert overall_severity([dq, safe]) is Severity.DATA_QUALITY
+
+
+def test_corrupt_baseline_is_data_quality_not_safe():
+    for b in (Baseline(mean=float("nan"), std=10.0, n=5),
+              Baseline(mean=100.0, std=float("nan"), n=5),
+              Baseline(mean=100.0, std=0.0, n=5)):
+        rz = zscore_detect(50.0, b, kpi="k")
+        rc = cusum_detect(np.array([1.0, 2.0, 3.0]), b, kpi="k")
+        assert rz.severity is Severity.DATA_QUALITY, f"zscore leaked {rz.severity} for {b}"
+        assert rc.severity is Severity.DATA_QUALITY, f"cusum leaked {rc.severity} for {b}"

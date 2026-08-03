@@ -19,3 +19,7 @@ def is_finite_scalar(x) -> bool:
         return bool(np.isfinite(float(x)))
     except (TypeError, ValueError):
         return False
+
+
+def baseline_is_usable(mean, std) -> bool:
+    return is_finite_scalar(mean) and is_finite_scalar(std) and float(std) > 0.0

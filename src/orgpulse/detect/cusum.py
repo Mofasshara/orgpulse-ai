@@ -4,7 +4,7 @@ import numpy as np
 
 from orgpulse.detect.baseline import Baseline
 from orgpulse.detect.types import AnomalyResult, Severity
-from orgpulse.detect.validation import ensure_1d_finite
+from orgpulse.detect.validation import baseline_is_usable, ensure_1d_finite
 
 
 def cusum_detect(
@@ -15,6 +15,9 @@ def cusum_detect(
     except ValueError as exc:
         return AnomalyResult(kpi=kpi, method="cusum", severity=Severity.DATA_QUALITY,
                              score=float("nan"), flagged=True, detail=f"data quality: {exc}")
+    if not baseline_is_usable(baseline.mean, baseline.std):
+        return AnomalyResult(kpi=kpi, method="cusum", severity=Severity.DATA_QUALITY,
+                             score=float("nan"), flagged=True, detail="unusable baseline (non-finite or std<=0)")
     z = (arr - baseline.mean) / baseline.std
     s_hi = 0.0
     s_lo = 0.0
