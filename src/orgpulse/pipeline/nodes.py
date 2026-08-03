@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import random
 from typing import TypedDict
 
 import numpy as np
@@ -91,7 +92,12 @@ def forecast_node(state: PipelineState) -> ForecastNodeOutput:
     Forecast the hero KPI (clinical daily_enrollment) at horizons 30, 60, 90 days.
 
     Returns forecast with keys: yhat, lower (yhat_lower), upper (yhat_upper).
+    Sets seed=42 for determinism in Prophet's uncertainty sampling.
     """
+    # Set seed for determinism (Prophet uses Monte Carlo for uncertainty intervals)
+    np.random.seed(42)
+    random.seed(42)
+
     forecast_result = {}
 
     if "clinical" in state:
