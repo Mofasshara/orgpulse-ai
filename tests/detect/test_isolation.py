@@ -27,3 +27,17 @@ def test_deterministic_given_random_state():
     a = isolation_detect(history, current, kpi="supply")
     b = isolation_detect(history, current, kpi="supply")
     assert a.score == b.score and a.severity == b.severity
+
+
+def test_isolation_nonfinite_is_data_quality_not_safe():
+    hist = np.random.default_rng(0).normal([100, 5], [8, 0.5], size=(200, 2))
+    assert isolation_detect(hist, np.array([np.nan, np.nan]), kpi="k").severity is Severity.DATA_QUALITY
+    assert isolation_detect(hist, np.array([np.inf, 5.0]), kpi="k").severity is Severity.DATA_QUALITY
+    bad_hist = hist.copy(); bad_hist[0, 0] = np.nan
+    assert isolation_detect(bad_hist, np.array([100.0, 5.0]), kpi="k").severity is Severity.DATA_QUALITY
+
+
+def test_isolation_empty_or_shape_mismatch_is_data_quality():
+    hist = np.random.default_rng(0).normal([100, 5], [8, 0.5], size=(200, 2))
+    assert isolation_detect(np.empty((0, 2)), np.array([1.0, 2.0]), kpi="k").severity is Severity.DATA_QUALITY
+    assert isolation_detect(hist, np.array([1.0]), kpi="k").severity is Severity.DATA_QUALITY  # wrong dims

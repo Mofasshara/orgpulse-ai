@@ -16,6 +16,10 @@ _AMENDMENT_RAMP_STEEPNESS: float = 0.15
 def generate_clinical(
     start_date: date, days: int, rng: np.random.Generator, n_sites: int = 8
 ) -> pd.DataFrame:
+    if days < 1:
+        raise ValueError("days must be >= 1")
+    if n_sites < 1:
+        raise ValueError("n_sites must be >= 1")
     dates = date_series(start_date, days)
     t = np.arange(days)
     rows = []

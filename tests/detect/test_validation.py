@@ -1,3 +1,6 @@
+import json
+from dataclasses import asdict
+
 import numpy as np
 import pytest
 
@@ -54,3 +57,29 @@ def test_corrupt_baseline_is_data_quality_not_safe():
         rc = cusum_detect(np.array([1.0, 2.0, 3.0]), b, kpi="k")
         assert rz.severity is Severity.DATA_QUALITY, f"zscore leaked {rz.severity} for {b}"
         assert rc.severity is Severity.DATA_QUALITY, f"cusum leaked {rc.severity} for {b}"
+
+
+def test_baseline_zero_n_is_data_quality():
+    b = Baseline(mean=0.0, std=1.0, n=0)
+    assert zscore_detect(0.0, b, kpi="k").severity is Severity.DATA_QUALITY
+    assert cusum_detect(np.array([1.0, 2.0, 3.0]), b, kpi="k").severity is Severity.DATA_QUALITY
+
+
+def test_invalid_params_are_data_quality_not_safe():
+    b = Baseline(mean=100.0, std=10.0, n=90)
+    assert zscore_detect(0.0, b, kpi="k", warn=float("nan"), crit=float("nan")).severity is Severity.DATA_QUALITY
+    assert zscore_detect(0.0, b, kpi="k", warn=5.0, crit=1.0).severity is Severity.DATA_QUALITY  # warn>=crit
+    assert cusum_detect(np.array([1.0, 2.0, 3.0]), b, kpi="k", k=float("nan")).severity is Severity.DATA_QUALITY
+
+
+def test_overflow_standardization_is_data_quality_not_critical():
+    b = Baseline(mean=-1e308, std=1.0, n=90)
+    r = zscore_detect(1e308, b, kpi="k")
+    assert r.severity is Severity.DATA_QUALITY   # not a fabricated CRITICAL with inf score
+
+
+def test_data_quality_score_is_none_and_json_serializable():
+    b = Baseline(mean=100.0, std=10.0, n=90)
+    r = zscore_detect(float("nan"), b, kpi="k")
+    assert r.score is None
+    json.dumps(asdict(r) | {"severity": int(r.severity)}, allow_nan=False)  # must not raise

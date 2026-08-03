@@ -2,6 +2,7 @@ from datetime import date
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from orgpulse.config import make_rng
 from orgpulse.generators.clinical import generate_clinical, PROTOCOL_AMENDMENT_DAY
@@ -80,3 +81,10 @@ def test_holiday_dip_actually_reduces_enrollment():
         late_dec = s[[d for d in s.index if d.month == 12 and d.day >= 22]].mean()
         ratios.append(late_dec / early_dec)
     assert np.mean(ratios) < 0.7                    # holiday window clearly lower
+
+
+def test_generate_clinical_rejects_bad_args():
+    with pytest.raises(ValueError):
+        generate_clinical(date(2026, 1, 1), 0, make_rng(0))
+    with pytest.raises(ValueError):
+        generate_clinical(date(2026, 1, 1), 30, make_rng(0), n_sites=0)

@@ -12,12 +12,12 @@
 |--------------|-------|
 | ✅ Done       | 15    |
 | 🔄 In Progress | 0   |
-| ⏳ Pending    | 24    |
+| ⏳ Pending    | 29    |
 | 🚫 Blocked    | 0     |
 
-**Total estimated time:** 81h (~10.1d)
+**Total estimated time:** 86h (~10.8d)
 **Elapsed time:** 24h (Phases 1–2.5 complete)
-**Remaining estimate:** 57h (~7.1d)
+**Remaining estimate:** 62h (~7.8d)
 
 ---
 
@@ -53,7 +53,7 @@
 | 1 | Project scaffolding & OrgPulseConfig | ✅ Done | 1h | 2026-08-03 00:00 | 2026-08-03 01:30 | |
 | 2 | Shared generator primitives (clock, logistic, holiday dip) | ✅ Done | 1h | 2026-08-03 01:30 | 2026-08-03 02:30 | |
 | 3 | Clinical-trial enrollment generator (hero) | ✅ Done | 3h | 2026-08-03 02:30 | 2026-08-03 03:10 | Amendment redesigned twice (multiplier→ceiling→ramp-in surge); sustained surge, cliff-guarded test |
-| 4 | QC/lab generator (calibration drift, OOS clusters) | ✅ Done | 2h | 2026-08-03 02:40 | 2026-08-03 02:55 | Signed-drift test strengthened |
+| 4 | QC/lab generator (calibration drift, drift-dependent OOS incidence) | ✅ Done | 2h | 2026-08-03 02:40 | 2026-08-03 02:55 | Signed-drift test strengthened |
 | 5 | Supply-chain generator (sawtooth, spikes, seasonality) | ✅ Done | 2h | 2026-08-03 02:55 | 2026-08-03 03:05 | Seasonality test hardened (correlation) |
 | 6 | `orgpulse generate` CLI | ✅ Done | 1h | 2026-08-03 03:05 | 2026-08-03 03:15 | 24/24 suite green; smoke run OK |
 
@@ -83,6 +83,20 @@
 | 3 | CUSUM severity calibrated to window-length false-alarm target | ✅ Done | 2h | 2026-08-03 05:40 | 2026-08-03 05:55 | In-control CRIT 0.5–1.8%; power 99% |
 | 4 | Harden detection integration tests (assert direction; bound false-alarm rate) | ✅ Done | 0.5h | 2026-08-03 05:55 | 2026-08-03 06:05 | Fix-loop: pass_rate not calm → screen_fail_rate |
 | 5 | Hygiene: honest OOS label, CLI day bounds, pytest dev-group | ✅ Done | 0.5h | 2026-08-03 06:05 | 2026-08-03 06:15 | |
+
+### Phase 2.6 — Robustness Completion (Codex round 2)  🔄
+
+**Goal:** Close the "bad data never SAFE / never crashes" contract completely + make CUSUM false-alarm calibration valid for any usable baseline. All gaps Codex-found + controller-verified.
+**Phase estimate:** 5h
+**Plan:** `docs/superpowers/plans/2026-08-03-orgpulse-p2.6-robustness.md`
+
+| # | Task | Status | Estimate | Started | Completed | Notes |
+|---|------|--------|----------|---------|-----------|-------|
+| 1 | Scalar-detector DQ contract (n≥1, param+overflow guards, score None) | ⏳ Pending | 1h | — | — | |
+| 2 | detect_kpi validates history/recent; empty results → DATA_QUALITY | ⏳ Pending | 0.5h | — | — | Codex BLOCK |
+| 3 | CUSUM min baseline + recalibrate at worst-case + window-dependency spy test | ⏳ Pending | 2h | — | — | n=5 gave 46% false-alarm |
+| 4 | Isolation Forest finite/shape validation → DATA_QUALITY | ⏳ Pending | 0.5h | — | — | |
+| 5 | Generator arg validation + honest OOS relabel + dedupe dev deps | ⏳ Pending | 1h | — | — | |
 
 ### Phase 3 — Forecasting (P3)  ⏳
 
@@ -167,4 +181,5 @@
 | 2026-08-03 02:10 | Clinical generator's protocol-amendment mechanism changed from "multiply daily rate ×1.6" to "raise enrollment ceiling ×1.6" | Plan defect found during Task 3: by the amendment day the logistic curve has plateaued, so daily increments are ~0 and multiplying stays ~0 — the intended post-amendment surge would not appear. Raising the ceiling re-opens a real surge and is more domain-accurate (amendment loosens inclusion criteria → larger addressable population). | Phase 1 Task 3 only; no interface/schema change, determinism preserved; plan doc + brief corrected to match. | Plan §Task 3 step-3 used `daily *= 1.6` after `PROTOCOL_AMENDMENT_DAY`. |
 | 2026-08-03 03:05 | Amendment mechanism redesigned again: from "switch to higher-ceiling curve" to "new capacity ramps in over weeks via its own logistic"; amendment test hardened with a `max < 4×mean` cliff-guard | Final whole-branch review found the ceiling-switch dumped the entire capacity gap into a single 1,937-patient cliff day, and the 30-day-mean test passed only because that one outlier dominated the window — a luck-passing test on the hero feature. Redesign (not another patch) per root-cause policy; validated across seeds 42/7/123/2024 (sustained ~2× surge, busiest day ~1.6× window mean). | Phase 1 Task 3 only; no interface/schema change, determinism preserved; plan doc + brief + test corrected. | Plan §Task 3 used two logistic curves switched at day 120; test compared 30-day before/after means only. |
 | 2026-08-03 03:40 | CUSUM severity thresholds changed from (CRITICAL≥h, WARNING≥0.6h) to (CRITICAL≥2h, WARNING≥h) | Implementer hit a genuine BLOCK: a stable in-control series peaks up to ~9 over a 60-sample window, so 0.6h=3.0 false-warned. Empirically validated (20 seeds): stable always <2h; any ≥1σ shift always >15. Threshold correction, not a code/interface change. | Phase 2 Task 3 only; tests unchanged (they pass under corrected mapping). | Plan §P2 Task 3 mapped CRITICAL at h and WARNING at 0.6h. |
+| 2026-08-03 06:30 | Added **Phase 2.6 — Robustness Completion** after a 2nd Codex review | Codex re-review: 3 findings fully resolved, but the "bad data never SAFE/crash" contract had holes (n=0/empty-list→SAFE, empty/2-D history→crash, nan params→SAFE, IsolationForest NaN→SAFE) and CUSUM calibration collapsed on short baselines (n=5→46% false-alarm; verified). Recalibrated CUSUM at the worst-case minimum baseline (n=60) + enforce minimum; complete DQ contract. | 5 tasks before Phase 3. | Plan 2.5 fixed specific cases, not the general contract; CUSUM table assumed ~90-pt baseline undocumented. |
 | 2026-08-03 05:00 | Added **Phase 2.5 — Hardening** after a Codex adversarial review found must-fix defects in Plans 1–2 | Codex mutation-tested and multi-seed-validated; found (a) clinical holiday-dip inert (0/2920 rows change), (b) amendment integration test fires on the OPPOSITE signal, (c) detectors return SAFE on NaN/empty data, (d) CUSUM 2h/h uncalibrated & window-length-dependent (in-control CRITICAL up to 3.6% at n=365 — my "20-seed validated" claim was too thin), (e) calm-QC test seed-selected, (f) OOS mislabeled as clustered. My internal reviews measured margins, not mutations. | Inserts 5 hardening tasks before Phase 3; Isolation Forest wiring + 0.10 cutoff deferred to Phase 4 (claim corrected: P2 is NOT a complete 3-detector stack). | Plans 1–2 were treated as a complete, trustworthy foundation. |
