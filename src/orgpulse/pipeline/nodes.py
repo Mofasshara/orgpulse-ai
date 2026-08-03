@@ -8,7 +8,7 @@ import numpy as np
 from orgpulse.detect.orchestrator import detect_kpi, overall_severity
 from orgpulse.detect.types import Severity
 from orgpulse.forecast.prophet_forecaster import forecast_kpi, series_from_generator
-from orgpulse.pipeline.state import KpiFinding, PipelineState
+from orgpulse.pipeline.state import HUMAN_OVERSIGHT_DISCLAIMER, KpiFinding, PipelineState, Recommendation
 
 
 class DetectNodeOutput(TypedDict):
@@ -112,3 +112,84 @@ def forecast_node(state: PipelineState) -> ForecastNodeOutput:
             }
 
     return {"forecast": forecast_result}
+
+
+def analyst_node(state: PipelineState, llm) -> dict:
+    """
+    Analyze findings and forecast via LLM.
+
+    Builds a prompt from kpi_findings + forecast, calls llm.analyze,
+    returns {"analysis": <str>}.
+    """
+    findings = state.get("kpi_findings", [])
+    forecast = state.get("forecast", {})
+
+    # Build a readable prompt from findings and forecast
+    prompt_lines = ["KPI Findings:"]
+    for f in findings:
+        prompt_lines.append(f"- {f.kpi} ({f.severity}): {f.detail} [latest={f.latest_value}]")
+
+    prompt_lines.append("\nForecast (hero KPI daily_enrollment):")
+    if "daily_enrollment" in forecast:
+        for horizon, data in forecast["daily_enrollment"].items():
+            yhat = data.get("yhat", "N/A")
+            lower = data.get("lower", "N/A")
+            upper = data.get("upper", "N/A")
+            prompt_lines.append(f"- {horizon}: yhat={yhat}, [{lower}, {upper}]")
+    else:
+        prompt_lines.append("- No forecast available")
+
+    prompt = "\n".join(prompt_lines)
+
+    # Call LLM analyze
+    analysis = llm.analyze("You are a clinical data quality analyst.", prompt)
+
+    return {"analysis": analysis}
+
+
+def recommendation_node(state: PipelineState, llm) -> dict:
+    """
+    Generate recommendations for flagged KPIs via LLM.
+
+    Identifies flagged KPIs (severity != SAFE; if none, defaults to "daily_enrollment"),
+    calls llm.recommend, wraps each result in Recommendation objects with
+    disclaimer=HUMAN_OVERSIGHT_DISCLAIMER and review_status="PENDING_HUMAN_REVIEW",
+    sets alert = (overall_severity == "CRITICAL").
+    Returns {"recommendations": [...], "alert": <bool>}.
+    """
+    findings = state.get("kpi_findings", [])
+    overall_severity = state.get("overall_severity", "SAFE")
+
+    # Identify flagged KPIs (severity != SAFE)
+    flagged_kpis = [f.kpi for f in findings if f.severity != "SAFE"]
+
+    # If no flagged KPIs, use the hero KPI
+    if not flagged_kpis:
+        flagged_kpis = ["daily_enrollment"]
+
+    # Build prompt for LLM
+    prompt_lines = ["Generate CAPA recommendations for the following flagged KPIs:"]
+    for kpi in flagged_kpis:
+        prompt_lines.append(f"- {kpi}")
+
+    prompt = "\n".join(prompt_lines)
+
+    # Call LLM recommend
+    rec_dicts = llm.recommend("You are a quality assurance CAPA expert.", prompt, kpis=flagged_kpis)
+
+    # Wrap each recommendation dict into a Recommendation object
+    recommendations = []
+    for rec_dict in rec_dicts:
+        recommendation = Recommendation(
+            kpi=rec_dict["kpi"],
+            text=rec_dict["text"],
+            capa_frame=rec_dict["capa_frame"],
+            disclaimer=HUMAN_OVERSIGHT_DISCLAIMER,
+            review_status="PENDING_HUMAN_REVIEW",
+        )
+        recommendations.append(recommendation)
+
+    # Set alert based on overall severity
+    alert = overall_severity == "CRITICAL"
+
+    return {"recommendations": recommendations, "alert": alert}
