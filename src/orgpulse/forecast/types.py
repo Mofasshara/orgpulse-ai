@@ -20,3 +20,13 @@ class Forecast:
             "yhat_lower": float(row["yhat_lower"]),
             "yhat_upper": float(row["yhat_upper"]),
         }
+
+
+@dataclass(frozen=True)
+class BacktestResult:
+    horizon: int
+    n_folds: int
+    mape: float
+    mase: float
+    per_fold_mape: tuple[float, ...]
+    per_fold_mase: tuple[float, ...]
