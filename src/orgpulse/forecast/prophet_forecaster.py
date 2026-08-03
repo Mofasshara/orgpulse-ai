@@ -35,16 +35,24 @@ def forecast_kpi(history: pd.DataFrame, kpi: str, horizons=(30, 60, 90), interva
     from prophet import Prophet
     _silence_prophet_logs()
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        m = Prophet(
-            interval_width=interval_width,
-            weekly_seasonality=True,
-            daily_seasonality=False,
-            yearly_seasonality=False,
-        )
-        m.fit(history[["ds", "y"]])
-        future = m.make_future_dataframe(periods=max(horizons))
-        fc = m.predict(future).tail(max(horizons))
+    # Prophet's MAP-mode uncertainty intervals draw from the legacy GLOBAL
+    # np.random. Seed locally for reproducible intervals, then RESTORE global
+    # RNG state so we don't leak a frozen seed into anything that runs after.
+    rng_state = np.random.get_state()
+    try:
+        np.random.seed(0)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            m = Prophet(
+                interval_width=interval_width,
+                weekly_seasonality=True,
+                daily_seasonality=False,
+                yearly_seasonality=False,
+            )
+            m.fit(history[["ds", "y"]])
+            future = m.make_future_dataframe(periods=max(horizons))
+            fc = m.predict(future).tail(max(horizons))
+    finally:
+        np.random.set_state(rng_state)
     frame = fc[["ds", "yhat", "yhat_lower", "yhat_upper"]].reset_index(drop=True)
     return Forecast(kpi=kpi, frame=frame, horizons=tuple(horizons), interval_width=interval_width)

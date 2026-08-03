@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import json
 from datetime import datetime
-from uuid import uuid4
 
 import pandas as pd
 from langgraph.graph import StateGraph, START, END
@@ -85,12 +83,10 @@ def run_pipeline(
     # Invoke graph
     final_state = compiled_graph.invoke(initial_state)
 
-    # Prepare generated_at and run_id
+    # Resolve generated_at first, then derive run_id from it so a caller
+    # pinning `now` gets a deterministic run_id too.
     generated_at = now if now is not None else datetime.now().isoformat(timespec="seconds")
-    if run_id is None:
-        # Timestamp-derived id: use first 19 chars of ISO format (YYYY-MM-DDTHH:MM:SS)
-        # Replace colons with dashes and T with underscore for filename safety
-        run_id = f"run-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    run_id = run_id or f"run-{generated_at}"
 
     # Assemble Findings from final state
     findings = Findings(
