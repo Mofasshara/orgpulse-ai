@@ -10,14 +10,14 @@
 
 | Status       | Count |
 |--------------|-------|
-| ✅ Done       | 20    |
+| ✅ Done       | 23    |
 | 🔄 In Progress | 0   |
-| ⏳ Pending    | 24    |
+| ⏳ Pending    | 21    |
 | 🚫 Blocked    | 0     |
 
 **Total estimated time:** 86h (~10.8d)
-**Elapsed time:** 29h (Phases 1–2.6 complete)
-**Remaining estimate:** 57h (~7.1d)
+**Elapsed time:** 37h (Phases 1–3 complete)
+**Remaining estimate:** 49h (~6.1d)
 
 ---
 
@@ -98,16 +98,17 @@
 | 4 | Isolation Forest finite/shape validation → DATA_QUALITY | ✅ Done | 0.5h | 2026-08-03 07:15 | 2026-08-03 07:22 | jagged/param edge → Plan 4 |
 | 5 | Generator arg validation + honest OOS relabel + dedupe dev deps | ✅ Done | 1h | 2026-08-03 07:22 | 2026-08-03 07:35 | |
 
-### Phase 3 — Forecasting (P3)  ⏳
+### Phase 3 — Forecasting (P3)  ✅
 
 **Goal:** Prophet forecasts (30/60/90d) with honest held-out backtest metrics + interval calibration on the hero stream.
 **Phase estimate:** 8h
+**Plan:** `docs/superpowers/plans/2026-08-03-orgpulse-p3-forecasting.md`
 
 | # | Task | Status | Estimate | Started | Completed | Notes |
 |---|------|--------|----------|---------|-----------|-------|
-| 1 | Prophet forecaster (30/60/90d + intervals) | ⏳ Pending | 3h | — | — | |
-| 2 | Rolling-origin backtest harness (MAPE/MASE) | ⏳ Pending | 3h | — | — | |
-| 3 | Interval calibration check (90% coverage) | ⏳ Pending | 2h | — | — | |
+| 1 | Prophet forecaster (30/60/90d + intervals) | ✅ Done | 3h | 2026-08-03 07:50 | 2026-08-03 08:00 | Deterministic; lazy import; compute-plane only |
+| 2 | Rolling-origin backtest harness (MAPE/MASE) | ✅ Done | 3h | 2026-08-03 08:00 | 2026-08-03 08:12 | Honest: MAPE ~17%, MASE ~1.4 (no leakage) |
+| 3 | Interval calibration check (90% coverage) | ✅ Done | 2h | 2026-08-03 08:12 | 2026-08-04 08:25 | Detects overconfidence (0.72→0.88); in-sample disclosed |
 
 ### Phase 4 — LangGraph Analysis DAG (P4)  ⏳
 
