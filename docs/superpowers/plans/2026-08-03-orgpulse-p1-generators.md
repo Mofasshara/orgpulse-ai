@@ -567,7 +567,7 @@ Expected: PASS (5 tests)
 
 ```bash
 git add src/orgpulse/generators/qc.py tests/test_qc_generator.py
-git commit -m "feat: QC/lab generator with calibration drift and OOS clustering"
+git commit -m "feat: QC/lab generator with calibration drift and drift-dependent OOS incidence"
 ```
 
 ---
@@ -841,7 +841,7 @@ git commit -m "feat: orgpulse generate CLI writing all three streams"
 **Spec coverage (P0 + P1):**
 - P0 scaffolding → Task 1 (pyproject, package, config). ✓
 - P1 clinical generator (hero, injected breaks) → Task 3. ✓
-- P1 QC generator (calibration drift, OOS clusters) → Task 4. ✓
+- P1 QC generator (calibration drift, drift-dependent OOS incidence) → Task 4. ✓
 - P1 supply generator (sawtooth, spikes, seasonality) → Task 5. ✓
 - Determinism-given-seed constraint → tested in every generator task. ✓
 - CLI entrypoint (`orgpulse generate`) → Task 6. ✓
