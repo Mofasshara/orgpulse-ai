@@ -329,8 +329,24 @@ from orgpulse.forecast.types import CalibrationResult
 def interval_calibration(
     series: pd.DataFrame, horizon: int = 30, n_folds: int = 4, nominal: float = 0.9, min_train: int = 150
 ) -> CalibrationResult:
+    """Diagnose and correct Prophet's interval overconfidence to nominal coverage.
+
+    Over rolling-origin folds, measures `raw_coverage` of the nominal intervals and
+    computes a widening `scale_factor` (the nominal-quantile of the standardized
+    residuals), then reports the resulting `adjusted_coverage`.
+
+    HONESTY NOTE: this is an IN-SAMPLE calibration — the scale is both fit and
+    evaluated on the same rolling-fold points, so `adjusted_coverage ≈ nominal`
+    holds largely by construction and is NOT a held-out estimate of generalization.
+    A production version would fit the scale on a separate calibration fold
+    (split-conformal prediction). The value here is diagnostic: it quantifies how
+    overconfident Prophet's raw intervals are (`raw_coverage` << nominal) and the
+    correction factor needed to reach nominal.
+    """
     n = len(series)
     last_cutoff = n - horizon
+    if last_cutoff <= min_train:
+        raise ValueError("series too short for the requested horizon/min_train")
     cutoffs = np.linspace(min_train, last_cutoff, n_folds).astype(int)
     actual_all, yhat_all, lower_all, upper_all = [], [], [], []
     for c in cutoffs:
