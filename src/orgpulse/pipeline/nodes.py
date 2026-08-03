@@ -4,7 +4,6 @@ import math
 from typing import TypedDict
 
 import numpy as np
-import pandas as pd
 
 from orgpulse.detect.orchestrator import detect_kpi, overall_severity
 from orgpulse.detect.types import Severity
@@ -21,6 +20,27 @@ class ForecastNodeOutput(TypedDict):
     forecast: dict
 
 
+def _kpi_finding(kpi: str, series) -> KpiFinding | None:
+    """
+    Build a KpiFinding for one KPI series.
+
+    - Requires >= 120 points (>=90 baseline + 30 recent); returns None if shorter.
+    - detail comes from the *driving* detector (the one whose severity == the
+      overall/max severity), not always the zscore result.
+    - latest_value is a plain Python float (NaN/inf -> None) for JSON safety.
+    """
+    s = np.asarray(series, dtype=float)
+    if len(s) < 120:  # need >=90 baseline + 30 recent
+        return None
+    baseline, recent = s[:-30], s[-30:]
+    results = detect_kpi(baseline, recent, kpi=kpi)
+    sev = overall_severity(results)
+    driving = next((r for r in results if r.severity == sev), results[0])  # detail from the driving detector
+    v = float(recent[-1])
+    latest = v if math.isfinite(v) else None
+    return KpiFinding(kpi=kpi, severity=sev.name, detail=driving.detail, latest_value=latest)
+
+
 def detect_node(state: PipelineState) -> DetectNodeOutput:
     """
     Detect anomalies for each monitored KPI.
@@ -29,141 +49,39 @@ def detect_node(state: PipelineState) -> DetectNodeOutput:
     QC KPIs: pass_rate, calibration_offset
     Supply KPI: lead_time_days
 
-    For each KPI:
-    - Build daily series (aggregate for clinical)
-    - Split into baseline (>= 90) and recent (30)
-    - Run detect_kpi for each
-    - Record KpiFinding with severity, detail, latest_value
-    - Skip if series < 120
+    Each KPI series is split into a >=90-point baseline and a 30-point recent
+    window and run through detect_kpi. Series shorter than 120 are skipped.
     """
-    findings: list[KpiFinding] = []
-    all_severities: list[Severity] = []
+    series_by_kpi: list[tuple[str, np.ndarray]] = []
 
-    # Clinical hero: daily_enrollment
     if "clinical" in state:
-        clinical_df = state["clinical"]
-        # Aggregate via series_from_generator
-        clinical_series_df = series_from_generator(clinical_df, "date", "daily_enrollment")
-        y = clinical_series_df["y"].to_numpy()
+        clinical_series = series_from_generator(state["clinical"], "date", "daily_enrollment")["y"].to_numpy()
+        series_by_kpi.append(("daily_enrollment", clinical_series))
 
-        if len(y) >= 120:
-            baseline = y[:-30]
-            recent = y[-30:]
-
-            results = detect_kpi(baseline, recent, "daily_enrollment")
-            severity = overall_severity(results)
-
-            # Extract detail from the most relevant result (preferring flagged)
-            detail = results[0].detail if results else "no results"
-
-            # Latest value: last recent value
-            latest_val = float(recent[-1])
-            if not math.isfinite(latest_val):
-                latest_val = None
-
-            findings.append(
-                KpiFinding(
-                    kpi="daily_enrollment",
-                    severity=severity.name,
-                    detail=detail,
-                    latest_value=latest_val,
-                )
-            )
-            all_severities.append(severity)
-
-    # QC: pass_rate
     if "qc" in state:
         qc_df = state["qc"]
-        y = qc_df["pass_rate"].to_numpy()
+        series_by_kpi.append(("pass_rate", qc_df["pass_rate"].to_numpy()))
+        series_by_kpi.append(("calibration_offset", qc_df["calibration_offset"].to_numpy()))
 
-        if len(y) >= 120:
-            baseline = y[:-30]
-            recent = y[-30:]
-
-            results = detect_kpi(baseline, recent, "pass_rate")
-            severity = overall_severity(results)
-
-            detail = results[0].detail if results else "no results"
-
-            latest_val = float(recent[-1])
-            if not math.isfinite(latest_val):
-                latest_val = None
-
-            findings.append(
-                KpiFinding(
-                    kpi="pass_rate",
-                    severity=severity.name,
-                    detail=detail,
-                    latest_value=latest_val,
-                )
-            )
-            all_severities.append(severity)
-
-    # QC: calibration_offset
-    if "qc" in state:
-        qc_df = state["qc"]
-        y = qc_df["calibration_offset"].to_numpy()
-
-        if len(y) >= 120:
-            baseline = y[:-30]
-            recent = y[-30:]
-
-            results = detect_kpi(baseline, recent, "calibration_offset")
-            severity = overall_severity(results)
-
-            detail = results[0].detail if results else "no results"
-
-            latest_val = float(recent[-1])
-            if not math.isfinite(latest_val):
-                latest_val = None
-
-            findings.append(
-                KpiFinding(
-                    kpi="calibration_offset",
-                    severity=severity.name,
-                    detail=detail,
-                    latest_value=latest_val,
-                )
-            )
-            all_severities.append(severity)
-
-    # Supply: lead_time_days
     if "supply" in state:
-        supply_df = state["supply"]
-        y = supply_df["lead_time_days"].to_numpy()
+        series_by_kpi.append(("lead_time_days", state["supply"]["lead_time_days"].to_numpy()))
 
-        if len(y) >= 120:
-            baseline = y[:-30]
-            recent = y[-30:]
-
-            results = detect_kpi(baseline, recent, "lead_time_days")
-            severity = overall_severity(results)
-
-            detail = results[0].detail if results else "no results"
-
-            latest_val = float(recent[-1])
-            if not math.isfinite(latest_val):
-                latest_val = None
-
-            findings.append(
-                KpiFinding(
-                    kpi="lead_time_days",
-                    severity=severity.name,
-                    detail=detail,
-                    latest_value=latest_val,
-                )
-            )
-            all_severities.append(severity)
-
-    # Overall severity: max across all KPIs
-    if all_severities:
-        overall_sev = max(all_severities).name
-    else:
-        overall_sev = Severity.DATA_QUALITY.name
+    findings: list[KpiFinding] = []
+    max_severity = Severity.DATA_QUALITY
+    have_finding = False
+    for kpi, series in series_by_kpi:
+        finding = _kpi_finding(kpi, series)
+        if finding is None:
+            continue
+        findings.append(finding)
+        sev = Severity[finding.severity]
+        if not have_finding or sev > max_severity:
+            max_severity = sev
+            have_finding = True
 
     return {
         "kpi_findings": findings,
-        "overall_severity": overall_sev,
+        "overall_severity": max_severity.name,
     }
 
 
