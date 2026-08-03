@@ -416,7 +416,7 @@ git commit -m "feat: detect + forecast pipeline nodes (deterministic, hero forec
 
 **Interfaces:**
 - `orgpulse.pipeline.nodes.analyst_node(state, llm: LLMClient) -> dict` — builds a prompt from `kpi_findings` + `forecast`, calls `llm.analyze(...)`, returns `{"analysis": <str>}`.
-- `orgpulse.pipeline.nodes.recommendation_node(state, llm: LLMClient) -> dict` — for the flagged KPIs (severity != SAFE; if none, the hero), calls `llm.recommend(...)`, wraps each returned dict into a `Recommendation` with `disclaimer=HUMAN_OVERSIGHT_DISCLAIMER` and `review_status="PENDING_HUMAN_REVIEW"`, and sets `alert = overall_severity == "CRITICAL"`. Returns `{"recommendations": [...], "alert": <bool>}`.
+- `orgpulse.pipeline.nodes.recommendation_node(state, llm: LLMClient) -> dict` — splits flagged KPIs by severity: **anomaly** (WARNING/CRITICAL) go to `llm.recommend(...)` as CAPA-framed recommendations; **DATA_QUALITY** KPIs get a distinct deterministic data-quality recommendation (`capa_frame="DATA-QUALITY"`, "investigate the data source, do NOT open a CAPA on the process") — a data problem is not a process deviation. If neither group is flagged, the hero (`daily_enrollment`) is used for the anomaly path. Every `Recommendation` carries `disclaimer=HUMAN_OVERSIGHT_DISCLAIMER` + `review_status="PENDING_HUMAN_REVIEW"`. `alert = overall_severity in ("CRITICAL", "DATA_QUALITY")` (a systemic data failure is also alert-worthy — you cannot assess). Returns `{"recommendations": [...], "alert": <bool>}`.
 - Both take an injected `llm` so tests use `OfflineLLM` (keyless).
 
 - [ ] **Step 1: Write the failing test**
