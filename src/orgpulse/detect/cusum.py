@@ -4,7 +4,7 @@ import numpy as np
 
 from orgpulse.detect.baseline import Baseline
 from orgpulse.detect.types import AnomalyResult, Severity
-from orgpulse.detect.validation import baseline_is_usable, ensure_1d_finite
+from orgpulse.detect.validation import baseline_is_usable, ensure_1d_finite, finite_nonneg
 
 
 _CALIB_TABLE: dict[int, tuple[float, float]] = {
@@ -65,16 +65,24 @@ def simulate_incontrol_quantiles(
 def cusum_detect(
     values: np.ndarray, baseline: Baseline, kpi: str, k: float = 0.5
 ) -> AnomalyResult:
+    def _dq(detail):
+        return AnomalyResult(kpi=kpi, method="cusum", severity=Severity.DATA_QUALITY, score=None, flagged=True, detail=detail)
+
     try:
         arr = ensure_1d_finite(values, "cusum values")
     except ValueError as exc:
-        return AnomalyResult(kpi=kpi, method="cusum", severity=Severity.DATA_QUALITY,
-                             score=float("nan"), flagged=True, detail=f"data quality: {exc}")
-    if not baseline_is_usable(baseline.mean, baseline.std):
-        return AnomalyResult(kpi=kpi, method="cusum", severity=Severity.DATA_QUALITY,
-                             score=float("nan"), flagged=True, detail="unusable baseline (non-finite or std<=0)")
+        return _dq(f"data quality: {exc}")
+
+    if not baseline_is_usable(baseline.mean, baseline.std, baseline.n):
+        return _dq("unusable baseline")
+    if not finite_nonneg(k):
+        return _dq("invalid k")
+
     z = (arr - baseline.mean) / baseline.std
     score, side, cross_idx = _cusum_peak(z, k)
+    if not np.isfinite(score):
+        return _dq("non-finite score")
+
     warn, crit = calibrated_thresholds(len(arr))
     if score >= crit:
         sev = Severity.CRITICAL

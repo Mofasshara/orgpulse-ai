@@ -16,6 +16,6 @@ class AnomalyResult:
     kpi: str
     method: str
     severity: Severity
-    score: float
+    score: float | None
     flagged: bool
     detail: str
