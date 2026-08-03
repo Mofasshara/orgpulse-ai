@@ -14,7 +14,13 @@ def isolation_detect(
     random_state: int = 42,
 ) -> AnomalyResult:
     hist = np.asarray(history, dtype=float)
-    cur = np.asarray(current, dtype=float).reshape(1, -1)
+    cur = np.asarray(current, dtype=float)
+    def _dq(detail): return AnomalyResult(kpi, "isolation_forest", Severity.DATA_QUALITY, None, True, detail)
+    if hist.ndim != 2 or hist.shape[0] < 1 or not np.all(np.isfinite(hist)):
+        return _dq("unusable history")
+    if cur.ndim != 1 or cur.shape[0] != hist.shape[1] or not np.all(np.isfinite(cur)):
+        return _dq("unusable current vector")
+    cur = cur.reshape(1, -1)
     model = IsolationForest(contamination=contamination, random_state=random_state)
     model.fit(hist)
     pred = int(model.predict(cur)[0])                 # -1 anomaly, +1 normal
