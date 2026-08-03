@@ -5,6 +5,7 @@ from enum import IntEnum
 
 
 class Severity(IntEnum):
+    DATA_QUALITY = -1
     SAFE = 0
     WARNING = 1
     CRITICAL = 2

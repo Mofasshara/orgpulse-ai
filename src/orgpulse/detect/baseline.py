@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from orgpulse.detect.validation import ensure_1d_finite
+
 _EPS = 1e-9
 
 
@@ -15,8 +17,6 @@ class Baseline:
 
 
 def fit_baseline(values: np.ndarray) -> Baseline:
-    arr = np.asarray(values, dtype=float)
-    if arr.size == 0:
-        raise ValueError("fit_baseline requires at least one value")
+    arr = ensure_1d_finite(values, "baseline values")
     std = float(np.std(arr, ddof=0))
     return Baseline(mean=float(np.mean(arr)), std=max(std, _EPS), n=int(arr.size))

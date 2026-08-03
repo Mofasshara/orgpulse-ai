@@ -4,12 +4,18 @@ import numpy as np
 
 from orgpulse.detect.baseline import Baseline
 from orgpulse.detect.types import AnomalyResult, Severity
+from orgpulse.detect.validation import ensure_1d_finite
 
 
 def cusum_detect(
     values: np.ndarray, baseline: Baseline, kpi: str, k: float = 0.5, h: float = 5.0
 ) -> AnomalyResult:
-    z = (np.asarray(values, dtype=float) - baseline.mean) / baseline.std
+    try:
+        arr = ensure_1d_finite(values, "cusum values")
+    except ValueError as exc:
+        return AnomalyResult(kpi=kpi, method="cusum", severity=Severity.DATA_QUALITY,
+                             score=float("nan"), flagged=True, detail=f"data quality: {exc}")
+    z = (arr - baseline.mean) / baseline.std
     s_hi = 0.0
     s_lo = 0.0
     max_hi = 0.0
