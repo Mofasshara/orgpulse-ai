@@ -21,15 +21,15 @@ def test_detects_qc_calibration_drift_upward():
 
 
 def test_detects_clinical_amendment_surge_upward():
-    df = generate_clinical(date(2026, 1, 1), 200, make_rng(42))
+    df = generate_clinical(date(2026, 1, 1), 220, make_rng(42))
     per = df.groupby("date")["daily_enrollment"].sum().sort_index().to_numpy()
-    history = per[PROTOCOL_AMENDMENT_DAY - 40 : PROTOCOL_AMENDMENT_DAY - 10]
-    recent = per[PROTOCOL_AMENDMENT_DAY : PROTOCOL_AMENDMENT_DAY + 30]
+    history = per[PROTOCOL_AMENDMENT_DAY - 60 : PROTOCOL_AMENDMENT_DAY]   # 60-pt baseline (>= min)
+    recent = per[PROTOCOL_AMENDMENT_DAY : PROTOCOL_AMENDMENT_DAY + 60]
     results = detect_kpi(history, recent, kpi="daily_enrollment")
     cusum = [r for r in results if r.method == "cusum"][0]
     assert overall_severity(results) >= Severity.WARNING
-    assert recent.mean() > history.mean()           # DIRECTION: surge is UP
-    assert "high" in cusum.detail                    # detector saw an upward shift
+    assert recent.mean() > history.mean()
+    assert "high" in cusum.detail
 
 
 def test_stable_clinical_kpi_has_bounded_false_alarm_rate():
