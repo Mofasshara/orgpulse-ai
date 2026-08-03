@@ -27,3 +27,17 @@ def test_recommendation_node_flags_and_gates():
     assert all(r.disclaimer == HUMAN_OVERSIGHT_DISCLAIMER for r in recs)
     # only the flagged (non-SAFE) KPI gets a recommendation
     assert {r.kpi for r in recs} == {"daily_enrollment"}
+
+
+def test_data_quality_finding_gets_data_quality_rec_and_alerts():
+    state = {
+        "kpi_findings": [KpiFinding(kpi="pass_rate", severity="DATA_QUALITY", detail="non-finite", latest_value=None)],
+        "overall_severity": "DATA_QUALITY",
+        "forecast": {},
+    }
+    out = recommendation_node(state, OfflineLLM())
+    assert out["alert"] is True
+    recs = out["recommendations"]
+    assert len(recs) == 1 and recs[0].capa_frame == "DATA-QUALITY"
+    assert recs[0].review_status == "PENDING_HUMAN_REVIEW"
+    assert "do NOT treat" in recs[0].text

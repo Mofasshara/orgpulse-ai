@@ -8,6 +8,7 @@ import numpy as np
 from orgpulse.detect.orchestrator import detect_kpi, overall_severity
 from orgpulse.detect.types import Severity
 from orgpulse.forecast.prophet_forecaster import forecast_kpi, series_from_generator
+from orgpulse.pipeline.llm import LLMClient
 from orgpulse.pipeline.state import HUMAN_OVERSIGHT_DISCLAIMER, KpiFinding, PipelineState, Recommendation
 
 
@@ -114,7 +115,7 @@ def forecast_node(state: PipelineState) -> ForecastNodeOutput:
     return {"forecast": forecast_result}
 
 
-def analyst_node(state: PipelineState, llm) -> dict:
+def analyst_node(state: PipelineState, llm: LLMClient) -> dict:
     """
     Analyze findings and forecast via LLM.
 
@@ -147,49 +148,70 @@ def analyst_node(state: PipelineState, llm) -> dict:
     return {"analysis": analysis}
 
 
-def recommendation_node(state: PipelineState, llm) -> dict:
+def recommendation_node(state: PipelineState, llm: LLMClient) -> dict:
     """
-    Generate recommendations for flagged KPIs via LLM.
+    Generate recommendations for flagged KPIs.
 
-    Identifies flagged KPIs (severity != SAFE; if none, defaults to "daily_enrollment"),
-    calls llm.recommend, wraps each result in Recommendation objects with
-    disclaimer=HUMAN_OVERSIGHT_DISCLAIMER and review_status="PENDING_HUMAN_REVIEW",
-    sets alert = (overall_severity == "CRITICAL").
+    Splits flagged findings by severity:
+    - anomaly_kpis (WARNING/CRITICAL) get an LLM-authored CAPA recommendation.
+    - dq_kpis (DATA_QUALITY) get a deterministic data-quality recommendation —
+      a data problem, not a process deviation, so no CAPA on the process.
+    Hero fallback: if both groups are empty, anomaly_kpis = ["daily_enrollment"].
+
+    Every recommendation carries HUMAN_OVERSIGHT_DISCLAIMER and defaults to
+    review_status="PENDING_HUMAN_REVIEW". Alert fires on a critical anomaly OR a
+    systemic data failure: overall_severity in ("CRITICAL", "DATA_QUALITY").
     Returns {"recommendations": [...], "alert": <bool>}.
     """
     findings = state.get("kpi_findings", [])
     overall_severity = state.get("overall_severity", "SAFE")
 
-    # Identify flagged KPIs (severity != SAFE)
-    flagged_kpis = [f.kpi for f in findings if f.severity != "SAFE"]
+    # Split flagged findings by severity
+    anomaly_kpis = [f.kpi for f in findings if f.severity in ("WARNING", "CRITICAL")]
+    dq_kpis = [f.kpi for f in findings if f.severity == "DATA_QUALITY"]
 
-    # If no flagged KPIs, use the hero KPI
-    if not flagged_kpis:
-        flagged_kpis = ["daily_enrollment"]
+    # Hero fallback: only when nothing at all is flagged
+    if not anomaly_kpis and not dq_kpis:
+        anomaly_kpis = ["daily_enrollment"]
 
-    # Build prompt for LLM
-    prompt_lines = ["Generate CAPA recommendations for the following flagged KPIs:"]
-    for kpi in flagged_kpis:
-        prompt_lines.append(f"- {kpi}")
-
-    prompt = "\n".join(prompt_lines)
-
-    # Call LLM recommend
-    rec_dicts = llm.recommend("You are a quality assurance CAPA expert.", prompt, kpis=flagged_kpis)
-
-    # Wrap each recommendation dict into a Recommendation object
     recommendations = []
-    for rec_dict in rec_dicts:
-        recommendation = Recommendation(
-            kpi=rec_dict["kpi"],
-            text=rec_dict["text"],
-            capa_frame=rec_dict["capa_frame"],
-            disclaimer=HUMAN_OVERSIGHT_DISCLAIMER,
-            review_status="PENDING_HUMAN_REVIEW",
-        )
-        recommendations.append(recommendation)
 
-    # Set alert based on overall severity
-    alert = overall_severity == "CRITICAL"
+    # Anomaly KPIs -> LLM-authored CAPA recommendations
+    if anomaly_kpis:
+        prompt_lines = ["Generate CAPA recommendations for the following flagged KPIs:"]
+        for kpi in anomaly_kpis:
+            prompt_lines.append(f"- {kpi}")
+        prompt = "\n".join(prompt_lines)
+
+        rec_dicts = llm.recommend("You are a quality assurance CAPA expert.", prompt, kpis=anomaly_kpis)
+        for rec_dict in rec_dicts:
+            recommendations.append(
+                Recommendation(
+                    kpi=rec_dict["kpi"],
+                    text=rec_dict["text"],
+                    capa_frame=rec_dict["capa_frame"],
+                    disclaimer=HUMAN_OVERSIGHT_DISCLAIMER,
+                    review_status="PENDING_HUMAN_REVIEW",
+                )
+            )
+
+    # Data-quality KPIs -> deterministic data-quality recommendation (no LLM)
+    for kpi in dq_kpis:
+        recommendations.append(
+            Recommendation(
+                kpi=kpi,
+                capa_frame="DATA-QUALITY",
+                text=(
+                    f"Data-quality issue on '{kpi}': the detector could not assess this KPI "
+                    "(missing, corrupt, or insufficient data). Investigate the data source and "
+                    "instrumentation before drawing any conclusion; do NOT treat this as a process "
+                    "deviation or open a CAPA on the process."
+                ),
+                disclaimer=HUMAN_OVERSIGHT_DISCLAIMER,
+            )
+        )
+
+    # Alert fires on a critical anomaly OR a systemic data failure
+    alert = overall_severity in ("CRITICAL", "DATA_QUALITY")
 
     return {"recommendations": recommendations, "alert": alert}
