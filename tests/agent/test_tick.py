@@ -31,5 +31,10 @@ def test_tick1_uses_remembered_baseline(tmp_path):
     f1 = run_tick(mem, 1, out_root=tmp_path / "runs", now="2026-08-05T07:00:00", offline=True)
     # tick 1 detected against the REMEMBERED baseline — no KPI bootstrapped
     assert all("bootstrap" not in kf.detail for kf in f1.kpi_findings)
+    # ...and the remembered baseline is USABLE: a real detection, never DATA_QUALITY
+    # from an undersized baseline (baseline window must stay >= CUSUM's 60-sample floor).
+    assert all(kf.severity != "DATA_QUALITY" for kf in f1.kpi_findings), [
+        (kf.kpi, kf.severity) for kf in f1.kpi_findings
+    ]
     assert (tmp_path / "m.json").exists() and set(mem.load()) == set(saved0)  # memory persisted+updated
     assert f1.run_id.startswith("tick-1-")

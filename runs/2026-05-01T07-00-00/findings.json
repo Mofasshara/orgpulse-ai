@@ -1,0 +1,75 @@
+{
+  "run_id": "tick-2-2026-05-01T07:00:00",
+  "generated_at": "2026-05-01T07:00:00",
+  "overall_severity": "CRITICAL",
+  "alert": true,
+  "kpi_findings": [
+    {
+      "kpi": "daily_enrollment",
+      "severity": "CRITICAL",
+      "detail": "high CUSUM peak=9.08 (warn=5.12, crit=7.96, n=30); first cross idx 22",
+      "latest_value": 54.0
+    },
+    {
+      "kpi": "pass_rate",
+      "severity": "SAFE",
+      "detail": "z=-0.47 (warn>=3.0, crit>=4.5)",
+      "latest_value": 0.9375
+    },
+    {
+      "kpi": "calibration_offset",
+      "severity": "CRITICAL",
+      "detail": "high CUSUM peak=61.77 (warn=5.12, crit=7.96, n=30); first cross idx 3",
+      "latest_value": 0.9798371325300718
+    },
+    {
+      "kpi": "lead_time_days",
+      "severity": "CRITICAL",
+      "detail": "high CUSUM peak=10.37 (warn=5.12, crit=7.96, n=30); first cross idx 7",
+      "latest_value": 5.572996888813004
+    }
+  ],
+  "forecast": {
+    "daily_enrollment": {
+      "h30": {
+        "yhat": 54.60976001274288,
+        "lower": 42.907212959909096,
+        "upper": 64.94924974149436
+      },
+      "h60": {
+        "yhat": 57.18918325322031,
+        "lower": 45.23508055289273,
+        "upper": 68.49732713188253
+      },
+      "h90": {
+        "yhat": 61.06941633735468,
+        "lower": 47.95100406695206,
+        "upper": 73.23305849315935
+      }
+    }
+  },
+  "analysis": "Automated interpretation (offline mode): the pipeline observed \u2014 KPI Findings:. These movements are assessed against GxP quality expectations; where a KPI is Warning/Critical the trend and forecast suggest a deviation trigger may apply and should be reviewed by the quality team.",
+  "recommendations": [
+    {
+      "kpi": "daily_enrollment",
+      "text": "Open a CAPA review for 'daily_enrollment': confirm the signal against source data, assess whether an ICH E6(R3) deviation threshold is crossed, and, if confirmed, document root cause and corrective action. Escalate to the responsible quality owner for sign-off.",
+      "capa_frame": "CAPA-001",
+      "disclaimer": "Decision support only \u2014 not an automated decision. A qualified human must review and approve before any action (EU AI Act Art. 14 human oversight).",
+      "review_status": "PENDING_HUMAN_REVIEW"
+    },
+    {
+      "kpi": "calibration_offset",
+      "text": "Open a CAPA review for 'calibration_offset': confirm the signal against source data, assess whether an ICH E6(R3) deviation threshold is crossed, and, if confirmed, document root cause and corrective action. Escalate to the responsible quality owner for sign-off.",
+      "capa_frame": "CAPA-002",
+      "disclaimer": "Decision support only \u2014 not an automated decision. A qualified human must review and approve before any action (EU AI Act Art. 14 human oversight).",
+      "review_status": "PENDING_HUMAN_REVIEW"
+    },
+    {
+      "kpi": "lead_time_days",
+      "text": "Open a CAPA review for 'lead_time_days': confirm the signal against source data, assess whether an ICH E6(R3) deviation threshold is crossed, and, if confirmed, document root cause and corrective action. Escalate to the responsible quality owner for sign-off.",
+      "capa_frame": "CAPA-003",
+      "disclaimer": "Decision support only \u2014 not an automated decision. A qualified human must review and approve before any action (EU AI Act Art. 14 human oversight).",
+      "review_status": "PENDING_HUMAN_REVIEW"
+    }
+  ]
+}
