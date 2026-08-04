@@ -51,11 +51,14 @@ generate 3 streams ─▶ detect ─▶ forecast ─▶ analyst (LLM) ─▶ rec
                 remembered baseline                        hash-chained audit log
 ```
 
-- **Detect** — Z-score + window-length-calibrated CUSUM (+ Isolation Forest) against a
-  baseline *remembered from the previous run*. Corrupt or insufficient data becomes an
-  explicit `DATA_QUALITY` state that **dominates** severity — it never passes as "all clear".
+- **Detect** — Z-score + window-length-calibrated CUSUM against a baseline *remembered from
+  the previous run*. Corrupt or insufficient data becomes an explicit `DATA_QUALITY` state
+  that **dominates** severity — it never passes as "all clear". (An Isolation Forest detector
+  is built and unit-tested in `detect/isolation.py` but is **not yet wired** into the live
+  univariate path — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#detector-status).)
 - **Forecast** — deterministic Prophet on the hero KPI (clinical enrollment): 30/60/90-day
-  forecast with a calibrated 90% interval, backtested honestly (see results below).
+  forecast with an **in-sample-calibrated** 90% interval (the calibration factor is applied to
+  the published bounds), backtested honestly (see results below).
 - **Reason** — an LLM turns the numbers into a GxP-framed interpretation and a CAPA
   recommendation, or, for data-quality findings, a "fix the data, don't open a CAPA" note.
 - **Govern** — every recommendation is `PENDING_HUMAN_REVIEW` with an Art. 14 disclaimer and
@@ -70,7 +73,9 @@ This project optimizes for **trustworthiness over leaderboard numbers**, and say
 - The Prophet forecaster **does not beat a naïve baseline** (rolling-origin MASE ≈ 1.4,
   MAPE ≈ 17%). The value delivered is the **calibrated uncertainty interval** and the audit
   trail around the forecast — not point accuracy. Raw Prophet intervals were over-confident
-  (~72% coverage); calibration lifts them toward the nominal 90% and that adjustment is disclosed.
+  (~70% measured coverage); a calibration factor is **applied** to widen the published interval
+  toward the nominal 90%. That calibration is fit **in-sample**, so out-of-sample coverage is
+  not claimed (a production system would use split-conformal) — and the README says so.
 - CUSUM thresholds are **calibrated to a documented ~1% in-control false-alarm rate per window
   length** (Monte-Carlo table), and enforce a ≥60-sample baseline floor — validated with
   mutation-style and multi-seed tests, not just favorable margins.
@@ -93,7 +98,7 @@ Anthropic Claude (reasoning, optional) · Hermes (autonomy/scheduling) · Stream
 | Path | What's there |
 |------|--------------|
 | `src/orgpulse/generators/` | Synthetic clinical / QC / supply streams with injected structural breaks |
-| `src/orgpulse/detect/` | Baseline, Z-score, calibrated CUSUM, Isolation Forest, orchestrator, validation |
+| `src/orgpulse/detect/` | Baseline, Z-score, calibrated CUSUM (live); Isolation Forest + orchestrator (built, not yet wired); validation |
 | `src/orgpulse/forecast/` | Deterministic Prophet forecaster, rolling-origin backtest, interval calibration |
 | `src/orgpulse/pipeline/` | LangGraph `detect→forecast→analyst→recommend` DAG + LLM client (offline/Claude) |
 | `src/orgpulse/governance/` | Hash-chained audit log + EU AI Act self-classification |

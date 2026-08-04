@@ -1,3 +1,5 @@
+import pytest
+
 from orgpulse.agent.baseline_memory import BaselineMemory
 from orgpulse.agent.tick import run_tick
 from orgpulse.detect.baseline import Baseline
@@ -42,3 +44,36 @@ def test_tick1_uses_remembered_baseline(tmp_path):
     latest_audit = HashChainedAuditLog(tmp_path / "runs" / "latest" / "audit.jsonl")
     assert latest_audit.entries()  # non-empty
     assert all(e.trace_id.startswith(f1.run_id) for e in latest_audit.entries())
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"baseline_days": 30},                       # below CUSUM floor
+        {"base_days": 50},                           # tick 0 baseline < 60 samples
+        {"base_days": 30, "days_per_period": 30},    # base_days below floor
+        {"base_days": 60, "days_per_period": 90},    # detection window longer than history
+        {"days_per_period": 0},                      # non-positive period
+    ],
+)
+def test_run_tick_rejects_unsafe_params_instead_of_degrading(tmp_path, kwargs):
+    """Codex R3: outside default params the old fix silently produced all-DATA_QUALITY or
+    empty findings/memory. Preconditions are now enforced at entry."""
+    mem = BaselineMemory(tmp_path / "m.json")
+    with pytest.raises(ValueError):
+        run_tick(mem, 1, out_root=tmp_path / "runs", now="2026-08-04T07:00:00", offline=True, **kwargs)
+
+
+def test_run_tick_refuses_to_overwrite_a_durable_run(tmp_path):
+    """Two ticks pinned to the same wall-clock second must not collide onto one dir and
+    destroy the first run's durable record."""
+    mem = BaselineMemory(tmp_path / "m.json")
+    same = "2026-01-01T07:00:00"
+    run_tick(mem, 0, out_root=tmp_path / "runs", now=same, offline=True)
+    # tick 1 at the same instant lands in a DISTINCT dir (tick number in the name) — no collision
+    run_tick(mem, 1, out_root=tmp_path / "runs", now=same, offline=True)
+    run_dirs = {p.name for p in (tmp_path / "runs").iterdir() if p.is_dir() and p.name != "latest"}
+    assert len(run_dirs) == 2
+    # re-running the exact same tick+instant refuses to clobber the existing durable run
+    with pytest.raises(FileExistsError):
+        run_tick(mem, 0, out_root=tmp_path / "runs", now=same, offline=True)

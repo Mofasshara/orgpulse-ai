@@ -7,6 +7,7 @@ import numpy as np
 
 from orgpulse.detect.orchestrator import detect_kpi, overall_severity
 from orgpulse.detect.types import Severity
+from orgpulse.forecast.calibration import interval_calibration
 from orgpulse.forecast.prophet_forecaster import forecast_kpi, series_from_generator
 from orgpulse.pipeline.llm import LLMClient
 from orgpulse.pipeline.state import HUMAN_OVERSIGHT_DISCLAIMER, KpiFinding, PipelineState, Recommendation
@@ -87,9 +88,17 @@ def detect_node(state: PipelineState) -> DetectNodeOutput:
 
 def forecast_node(state: PipelineState) -> ForecastNodeOutput:
     """
-    Forecast the hero KPI (clinical daily_enrollment) at horizons 30, 60, 90 days.
+    Forecast the hero KPI (clinical daily_enrollment) at horizons 30, 60, 90 days,
+    with a calibration factor APPLIED to the published interval (not just diagnosed).
 
-    Returns forecast with keys: yhat, lower (yhat_lower), upper (yhat_upper).
+    Raw Prophet intervals are overconfident (~70% coverage against a nominal 90%). We
+    fit a widening scale via rolling-origin folds (`interval_calibration`) and apply it
+    to the production bounds so the published interval reflects that correction. The
+    scale is fit IN-SAMPLE, so `calibration.in_sample` is recorded and the out-of-sample
+    coverage is explicitly not claimed. If the history is too short to calibrate, the raw
+    interval is published unchanged with `calibration.applied=False`.
+
+    Returns forecast[kpi] with per-horizon {yhat, lower, upper} plus a `calibration` block.
     """
     forecast_result = {}
 
@@ -101,14 +110,35 @@ def forecast_node(state: PipelineState) -> ForecastNodeOutput:
         # Forecast at horizons 30, 60, 90
         fc = forecast_kpi(daily_df, "daily_enrollment", horizons=(30, 60, 90))
 
-        # Extract forecasts at each horizon
-        forecast_result["daily_enrollment"] = {}
+        # Fit the interval-calibration scale on this history and APPLY it to the
+        # published bounds. Guard short histories: fall back to raw, uncalibrated.
+        try:
+            cal = interval_calibration(daily_df)
+            scale, raw_cov, applied = cal.scale_factor, cal.raw_coverage, True
+            cal_meta = {
+                "applied": True, "in_sample": True, "scale_factor": float(scale),
+                "raw_coverage": float(raw_cov), "nominal": float(cal.nominal),
+                "note": "interval widened by an in-sample calibration factor; "
+                        "out-of-sample coverage not validated",
+            }
+        except ValueError:
+            scale = 1.0
+            cal_meta = {
+                "applied": False, "in_sample": True, "scale_factor": 1.0,
+                "raw_coverage": None, "nominal": 0.9,
+                "note": "history too short to calibrate; raw Prophet interval published",
+            }
+
+        forecast_result["daily_enrollment"] = {"calibration": cal_meta}
         for h in (30, 60, 90):
             fc_at_h = fc.at_horizon(h)
+            yhat = float(fc_at_h["yhat"])
+            lower = float(fc_at_h["yhat_lower"])
+            upper = float(fc_at_h["yhat_upper"])
             forecast_result["daily_enrollment"][f"h{h}"] = {
-                "yhat": float(fc_at_h["yhat"]),
-                "lower": float(fc_at_h["yhat_lower"]),
-                "upper": float(fc_at_h["yhat_upper"]),
+                "yhat": yhat,
+                "lower": yhat - scale * (yhat - lower),  # widen by the calibration scale
+                "upper": yhat + scale * (upper - yhat),
             }
 
     return {"forecast": forecast_result}

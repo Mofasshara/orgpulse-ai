@@ -730,7 +730,7 @@ requires-dist = [
     { name = "plotly", marker = "extra == 'dashboard'", specifier = ">=5.20" },
     { name = "prophet", specifier = ">=1.1" },
     { name = "scikit-learn", specifier = ">=1.4" },
-    { name = "streamlit", marker = "extra == 'dashboard'", specifier = ">=1.38" },
+    { name = "streamlit", marker = "extra == 'dashboard'", specifier = ">=1.50" },
     { name = "typer", specifier = ">=0.12" },
 ]
 provides-extras = ["dashboard"]

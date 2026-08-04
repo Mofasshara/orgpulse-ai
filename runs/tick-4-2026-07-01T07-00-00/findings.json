@@ -31,20 +31,28 @@
   ],
   "forecast": {
     "daily_enrollment": {
+      "calibration": {
+        "applied": true,
+        "in_sample": true,
+        "scale_factor": 1.5484451135715678,
+        "raw_coverage": 0.6916666666666667,
+        "nominal": 0.9,
+        "note": "interval widened by an in-sample calibration factor; out-of-sample coverage not validated"
+      },
       "h30": {
         "yhat": 51.74379609972096,
-        "lower": 40.071219165295496,
-        "upper": 63.13570977391715
+        "lower": 33.66945138282166,
+        "upper": 69.38354916275918
       },
       "h60": {
         "yhat": 50.91520789233117,
-        "lower": 39.45242871148042,
-        "upper": 63.071358864753506
+        "lower": 33.16572348179294,
+        "upper": 69.7383404654168
       },
       "h90": {
         "yhat": 50.31182281687053,
-        "lower": 37.969050517721115,
-        "upper": 62.677363823007575
+        "lower": 31.199717362326112,
+        "upper": 69.45918436449229
       }
     }
   },

@@ -45,10 +45,14 @@ Most projects bolt compliance on at the end as a disclaimer. Here it's a cross-c
   system can emit is a recommendation stamped `PENDING_HUMAN_REVIEW`. It cannot act.
 - **Logging (Art. 12)** is a **hash-chained** `audit.jsonl`: every run and recommendation is
   appended with a trace_id, timestamp, input-data hash, and the model+version that produced it.
-  Alter any past entry and the chain breaks — `verify()` returns `False`. The dashboard
-  re-verifies the chain live, using a standalone verifier that a test proves equivalent to the
-  compute-plane implementation, so the presentation plane can attest to integrity without
-  importing the system it's attesting to.
+  The dashboard doesn't just re-verify the chain — it verifies that the `findings.json` on
+  screen still hashes to the `input_hash` the chain attests to, so editing the findings alone
+  is caught. The standalone verifier is proven equivalent to the compute-plane implementation
+  in tests (and fails closed on missing/malformed logs), so the presentation plane can attest
+  to integrity without importing the system it's attesting to. **Threat model, stated plainly:**
+  an unkeyed chain in a writable file catches accidental corruption and naïve tampering; it does
+  not stop an adversary who rewrites the whole file and recomputes the chain — that needs keyed
+  signing or an external anchor, which is noted as future work, not claimed as done.
 - **Annex III self-classification** is machine-readable and rendered to a document mapping
   Articles 9/11/12/13/14 to concrete mechanisms in the code.
 
@@ -58,9 +62,11 @@ The forecaster is deterministic Prophet with a rolling-origin backtest, and the 
 is that **it does not beat a naïve baseline** (MASE ≈ 1.4, MAPE ≈ 17%). Rather than hide that,
 the project foregrounds it — because the deliverable isn't point accuracy, it's a **calibrated
 uncertainty interval** plus the audit trail around it. Raw Prophet intervals were
-over-confident (~72% coverage against a nominal 90%); an interval-calibration step lifts them
-toward nominal, and the fact that it's an in-sample calibration is disclosed rather than
-buried. The anomaly detector gets the same treatment: CUSUM thresholds are calibrated to a
+over-confident (~70% coverage against a nominal 90%); an interval-calibration factor is
+**applied to the published bounds** (not merely diagnosed) to widen them toward nominal. That
+calibration is fit in-sample, so the case study says so out loud: the widened interval's
+*out-of-sample* coverage is not claimed — a production system would use split-conformal
+prediction. The anomaly detector gets the same treatment: CUSUM thresholds are calibrated to a
 documented ~1% in-control false-alarm rate *per window length* via a Monte-Carlo table, with a
 ≥60-sample baseline floor.
 
@@ -90,7 +96,7 @@ the root (decouple the baseline window from the detection window), locked with a
 |---|---|
 | Data streams | 3 (clinical hero + QC + supply) |
 | Analysis DAG | 4 nodes (LangGraph) |
-| Forecast horizons | 30 / 60 / 90 days, 90% calibrated interval |
+| Forecast horizons | 30 / 60 / 90 days, 90% in-sample-calibrated interval |
 | Tests | 117, keyless & offline |
 | External adversarial review rounds | 2 (all findings fixed & reproduction-verified) |
 | Deployed dashboard deps | 3 (`streamlit`, `pandas`, `plotly`) |

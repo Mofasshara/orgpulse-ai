@@ -12,7 +12,7 @@ import numpy as np
 from orgpulse.agent.baseline_memory import BaselineMemory
 from orgpulse.config import make_rng
 from orgpulse.detect.baseline import fit_baseline
-from orgpulse.detect.cusum import cusum_detect
+from orgpulse.detect.cusum import _MIN_BASELINE_N, cusum_detect
 from orgpulse.detect.orchestrator import overall_severity
 from orgpulse.detect.types import Severity
 from orgpulse.detect.zscore import zscore_detect
@@ -57,7 +57,26 @@ def run_tick(
     false-alarm calibration requires a baseline of at least 60 samples, so fitting the
     baseline on the short detection window alone would make every remembered baseline
     unusable (degrading every post-bootstrap tick to DATA_QUALITY).
+
+    Parameters are validated so the statistical preconditions the baseline window depends
+    on cannot be silently violated: ``days_per_period > 0``, ``baseline_days >= 60`` (the
+    CUSUM floor), and ``base_days >= max(60, days_per_period)`` so the very first tick has
+    both a full detection window and a usable (>=60-sample) baseline.
     """
+    if tick_number < 0:
+        raise ValueError(f"tick_number must be >= 0, got {tick_number}")
+    if days_per_period <= 0:
+        raise ValueError(f"days_per_period must be > 0, got {days_per_period}")
+    if baseline_days < _MIN_BASELINE_N:
+        raise ValueError(
+            f"baseline_days must be >= {_MIN_BASELINE_N} (the CUSUM calibration floor), "
+            f"got {baseline_days}"
+        )
+    if base_days < max(_MIN_BASELINE_N, days_per_period):
+        raise ValueError(
+            f"base_days must be >= max({_MIN_BASELINE_N}, days_per_period={days_per_period}) "
+            f"so tick 0 has a full detection window and a usable baseline, got {base_days}"
+        )
     days = base_days + tick_number * days_per_period
     start = date(2026, 1, 1)
     clinical = generate_clinical(start, days, make_rng(seed))
@@ -79,7 +98,10 @@ def run_tick(
         # kept longer than the detection window so CUSUM's ≥60-sample calibration holds.
         baseline_window = s[-baseline_days:]
         finite_bl = baseline_window[np.isfinite(baseline_window)]
-        if finite_bl.size >= 1:
+        # Never persist a baseline below the detector minimum — a too-small baseline would
+        # make the NEXT tick degrade to DATA_QUALITY. If this window is too thin (e.g. a KPI
+        # riddled with NaNs), skip saving so that KPI simply re-bootstraps next tick.
+        if finite_bl.size >= _MIN_BASELINE_N:
             new_baselines[kpi] = fit_baseline(finite_bl)
 
         prior = remembered.get(kpi)
@@ -123,7 +145,15 @@ def run_tick(
 
     model = "offline-stub" if offline else "claude-sonnet-5"
 
-    def _write(out_dir: Path) -> None:
+    def _write(out_dir: Path, *, is_latest: bool) -> None:
+        # Timestamped run dirs are durable, append-only history: never overwrite one (a
+        # same-second, same-tick re-run would otherwise silently destroy a prior run).
+        # `latest/` is a reusable mirror and is expected to be overwritten each tick.
+        if not is_latest and out_dir.exists():
+            raise FileExistsError(
+                f"refusing to overwrite existing run directory {out_dir} "
+                "(durable run history); use a distinct timestamp or tick_number"
+            )
         out_dir.mkdir(parents=True, exist_ok=True)
         fj = json.dumps(findings_obj.to_json_dict(), indent=2, allow_nan=False)
         (out_dir / "findings.json").write_text(fj)
@@ -147,7 +177,10 @@ def run_tick(
                 trace_id=f"{run_id}:{rec.kpi}:{i}", timestamp=generated_at,
             )
 
-    _write(out_root / generated_at.replace(":", "-"))
-    _write(out_root / "latest")
+    # Run-dir name includes the tick number so two ticks that share a wall-clock second
+    # (default timestamps have only second precision) don't collide onto the same directory.
+    run_dir_name = run_id.replace(":", "-")
+    _write(out_root / run_dir_name, is_latest=False)
+    _write(out_root / "latest", is_latest=True)
     memory.save(new_baselines)  # cross-run state: this period is the next baseline
     return findings_obj
