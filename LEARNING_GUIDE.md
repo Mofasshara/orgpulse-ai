@@ -259,6 +259,97 @@ whose forecasts we can *defend*, not just produce.
 
 ---
 
+## Part 3 — The Presentation Plane
+
+*This layer's job: show the world what the agent found, cheaply and safely, without
+ever touching the machinery that produced it.*
+
+### The split-plane pattern — the engine room vs. the shop window
+
+**What it is**
+Think of a **restaurant**: there's a kitchen (hot, dangerous, full of equipment and
+raw ingredients) and a dining room (calm, pleasant, where guests actually sit). You
+would never seat guests in the kitchen. OrgPulse is built the same way. The
+**compute plane** is the kitchen — the Hermes agent running Prophet, LangGraph, and
+scikit-learn locally to cook up results. The **presentation plane** is the dining
+room — the Streamlit dashboard where anyone can see those results plated up. The only
+thing passed between them is finished plates: the committed files in `runs/`.
+
+**The problem it solves**
+If the dashboard *were* the kitchen — if it imported Prophet and ran the model on
+demand — three things break: it becomes **expensive and fragile to host** (Prophet's
+compiled dependency often fails to install on free hosts), it needs to **hold an API
+key** in a public place, and it's **slow or dead on first load** while a model spins
+up. Splitting the planes makes the public surface a thin, keyless, always-populated
+view that renders pre-computed files.
+
+**How it works**
+1. The Hermes agent runs a tick locally, does all the heavy computation, and writes
+   three small files per run into `runs/` (and mirrors the newest into `runs/latest`).
+2. Those files are **committed to git** — so they're already present when the app
+   deploys. The dashboard is alive on first load with no computation.
+3. The Streamlit app reads `runs/latest`, renders it, and **re-verifies the audit
+   chain** — but imports *nothing* from the `orgpulse` package. Its dependency list is
+   three lightweight libraries.
+
+```
+KITCHEN (compute plane)          plated dishes         DINING ROOM (presentation plane)
+Hermes + Prophet + LangGraph ──▶  runs/*.json  ──▶  Streamlit dashboard (streamlit/pandas/plotly)
+(heavy, local, holds the key)     (committed)        (light, hosted, keyless, read-only)
+```
+
+**Why we chose it for this project**
+The alternative — a single Streamlit app that runs the model live — is simpler to
+wire up but fails exactly where a portfolio demo must not: on the public URL. We also
+considered a **separate backend API** (FastAPI serving results to the dashboard), but
+that adds a server to host and monitor for no benefit here; committed files *are* the
+API. The split-plane choice buys a demo that is always up and costs nothing to run.
+
+### Streamlit — the shop window
+
+**What it is**
+Streamlit is a **"turn a Python script into a web page" machine**. Normally, building
+a web dashboard means HTML, CSS, JavaScript, and a server. Streamlit lets you write
+ordinary top-to-bottom Python (`st.title(...)`, `st.metric(...)`, `st.dataframe(...)`)
+and it renders each statement as a piece of a live web app. Plotly, used alongside it,
+is the **charting library** that draws the interactive forecast fan (the shaded
+uncertainty band you can hover over).
+
+**The problem it solves**
+A dashboard is how a non-technical stakeholder — a quality manager, an auditor — sees
+what the agent found without reading JSON. Without something like Streamlit, showing
+the work means either raw files (unreadable to humans) or a full front-end project
+(weeks of work). Streamlit compresses "make it viewable by a human" from weeks to an
+afternoon.
+
+**How it works**
+1. The app runs as a Python script, top to bottom, on every page load.
+2. Each `st.*` call emits a widget: a title, a metric card, a coloured severity chip,
+   a Plotly chart, a dataframe.
+3. It loads the committed `findings.json` / `audit.jsonl`, colours each KPI by
+   severity, draws the forecast fan, lists the human-gated recommendations, and shows
+   a live ✅/❌ on the audit chain.
+
+**Why we chose it for this project**
+Streamlit deploys to **Streamlit Community Cloud** for free straight from a GitHub
+repo — ideal for a public portfolio piece. Alternatives: (1) **Dash/Plotly** — more
+powerful and customizable, but more boilerplate than this needs; (2) a **static site
++ pre-rendered charts** — cheapest to host but loses interactivity (hovering the
+forecast band, sortable audit table). Streamlit is the sweet spot of "fast to build,
+free to host, interactive enough."
+
+**Key things to know**
+- The app imports **no `orgpulse` code** on purpose — that's what keeps its
+  dependency list to three libraries and the split plane intact. It even
+  re-implements the audit-chain check standalone, with a test proving it agrees with
+  the real one (so a green checkmark on the dashboard means the same thing the compute
+  plane means by it).
+- Everything the dashboard shows is a **committed artifact**, so the demo is
+  reproducible: `scripts/seed_runs.py` regenerates the exact same run history
+  byte-for-byte.
+
+---
+
 ## Key Terms Glossary
 
 | Term | Plain-English meaning |

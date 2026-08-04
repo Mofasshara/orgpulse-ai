@@ -41,15 +41,22 @@ def run_tick(
     tick_number: int,
     *,
     days_per_period: int = 30,
+    baseline_days: int = 120,
     base_days: int = 200,
     seed: int = 42,
     offline: bool = True,
     out_root: Path = Path("runs"),
     now: str | None = None,
 ) -> Findings:
-    """One autonomous tick: detect the current period against the REMEMBERED baseline
-    (bootstrap on the first tick), forecast + reason, write run artifacts, and save the
-    current period's baseline back to memory for the next tick.
+    """One autonomous tick: detect the recent PERIOD (``days_per_period``) against the
+    REMEMBERED baseline (bootstrap on the first tick), forecast + reason, write run
+    artifacts, and save an established trailing baseline (``baseline_days``) back to
+    memory for the next tick.
+
+    The baseline window is deliberately longer than the detection window: CUSUM's
+    false-alarm calibration requires a baseline of at least 60 samples, so fitting the
+    baseline on the short detection window alone would make every remembered baseline
+    unusable (degrading every post-bootstrap tick to DATA_QUALITY).
     """
     days = base_days + tick_number * days_per_period
     start = date(2026, 1, 1)
@@ -68,9 +75,12 @@ def run_tick(
         if len(s) < n:
             continue
         current = s[-n:]
-        finite = current[np.isfinite(current)]
-        if finite.size >= 1:
-            new_baselines[kpi] = fit_baseline(finite)  # this period becomes the next baseline
+        # Established trailing baseline (long window) becomes the NEXT tick's baseline;
+        # kept longer than the detection window so CUSUM's ≥60-sample calibration holds.
+        baseline_window = s[-baseline_days:]
+        finite_bl = baseline_window[np.isfinite(baseline_window)]
+        if finite_bl.size >= 1:
+            new_baselines[kpi] = fit_baseline(finite_bl)
 
         prior = remembered.get(kpi)
         if prior is not None:
@@ -119,6 +129,10 @@ def run_tick(
         (out_dir / "findings.json").write_text(fj)
         (out_dir / "report.md").write_text(render_report(findings_obj))
         input_hash = hashlib.sha256(fj.encode("utf-8")).hexdigest()
+        # Each run dir holds exactly THIS run: clear any prior audit log (the reusable
+        # `latest/` dir would otherwise accumulate across ticks and diverge from
+        # findings.json/report.md). Durable per-run records live in the timestamped dirs.
+        (out_dir / "audit.jsonl").unlink(missing_ok=True)
         audit = HashChainedAuditLog(out_dir / "audit.jsonl")
         audit.append(
             "run",

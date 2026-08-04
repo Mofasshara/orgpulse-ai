@@ -1,0 +1,61 @@
+{
+  "run_id": "tick-4-2026-07-01T07:00:00",
+  "generated_at": "2026-07-01T07:00:00",
+  "overall_severity": "CRITICAL",
+  "alert": true,
+  "kpi_findings": [
+    {
+      "kpi": "daily_enrollment",
+      "severity": "SAFE",
+      "detail": "z=0.64 (warn>=3.0, crit>=4.5)",
+      "latest_value": 51.0
+    },
+    {
+      "kpi": "pass_rate",
+      "severity": "SAFE",
+      "detail": "z=0.81 (warn>=3.0, crit>=4.5)",
+      "latest_value": 1.0
+    },
+    {
+      "kpi": "calibration_offset",
+      "severity": "CRITICAL",
+      "detail": "high CUSUM peak=49.76 (warn=5.12, crit=7.96, n=30); first cross idx 3",
+      "latest_value": 1.2426418067536011
+    },
+    {
+      "kpi": "lead_time_days",
+      "severity": "SAFE",
+      "detail": "z=-0.73 (warn>=3.0, crit>=4.5)",
+      "latest_value": 4.178104160445831
+    }
+  ],
+  "forecast": {
+    "daily_enrollment": {
+      "h30": {
+        "yhat": 51.74379609972096,
+        "lower": 40.071219165295496,
+        "upper": 63.13570977391715
+      },
+      "h60": {
+        "yhat": 50.91520789233117,
+        "lower": 39.45242871148042,
+        "upper": 63.071358864753506
+      },
+      "h90": {
+        "yhat": 50.31182281687053,
+        "lower": 37.969050517721115,
+        "upper": 62.677363823007575
+      }
+    }
+  },
+  "analysis": "Automated interpretation (offline mode): the pipeline observed \u2014 KPI Findings:. These movements are assessed against GxP quality expectations; where a KPI is Warning/Critical the trend and forecast suggest a deviation trigger may apply and should be reviewed by the quality team.",
+  "recommendations": [
+    {
+      "kpi": "calibration_offset",
+      "text": "Open a CAPA review for 'calibration_offset': confirm the signal against source data, assess whether an ICH E6(R3) deviation threshold is crossed, and, if confirmed, document root cause and corrective action. Escalate to the responsible quality owner for sign-off.",
+      "capa_frame": "CAPA-001",
+      "disclaimer": "Decision support only \u2014 not an automated decision. A qualified human must review and approve before any action (EU AI Act Art. 14 human oversight).",
+      "review_status": "PENDING_HUMAN_REVIEW"
+    }
+  ]
+}

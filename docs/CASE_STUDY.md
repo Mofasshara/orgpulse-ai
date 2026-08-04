@@ -1,0 +1,96 @@
+# Case Study — OrgPulse AI: an autonomous agent you can run in regulated pharma
+
+## The problem
+
+Pharmaceutical operations generate continuous signals — patient enrollment, QC pass rates and
+instrument calibration, supplier lead times — and the expensive failures are the ones nobody
+notices for weeks: an enrollment surge after a protocol amendment, a QC instrument drifting out
+of calibration, a supplier quietly slipping. The obvious answer is "an AI that watches
+everything and flags problems." The reason that answer keeps failing in pharma isn't the
+detection — it's everything around it:
+
+- A model that **silently treats missing/corrupt data as "all clear"** is worse than no model.
+- A recommendation with **no audit trail** is unusable under GxP and the EU AI Act.
+- An agent that **takes action on its own** is a non-starter in a regulated environment.
+- A demo that needs a **running model and an API key** to show anything is dead on arrival.
+
+So the interesting engineering problem wasn't "can you detect an anomaly." It was: **can you
+build an agent that runs itself, and is still safe to run where regulators are watching?**
+Autonomy and compliance, fused — that's the wedge.
+
+## The architecture (and the one decision that shaped everything)
+
+The system splits into two planes that share nothing but a directory of committed artifacts
+(full diagram in [ARCHITECTURE.md](ARCHITECTURE.md)):
+
+- a **compute plane** — a Hermes-scheduled agent that runs the full `detect → forecast →
+  analyst → recommend` LangGraph DAG locally and writes small, tamper-evident run artifacts;
+- a **presentation plane** — a Streamlit dashboard that *only reads* those artifacts.
+
+That split was the highest-leverage decision in the project. Because the dashboard never
+imports the compute stack, it deploys to Streamlit Cloud with three dependencies
+(`streamlit`, `pandas`, `plotly`), holds no API key, and is **always alive** — it renders
+committed results, so there's nothing to spin up and nothing to fail on first load. The agent's
+autonomy lives entirely on the compute plane; the public surface is a pure, cheap view.
+
+The "autonomous" part is real: each daily tick detects the **recent 30-day period** against an
+**established 120-day baseline it remembered from the previous run**, then writes the updated
+baseline back. It has memory across runs, not just a schedule.
+
+## Where governance lives: everywhere, on purpose
+
+Most projects bolt compliance on at the end as a disclaimer. Here it's a cross-cut:
+
+- **Human oversight (Art. 14)** is *architectural*, not advisory: the strongest thing the
+  system can emit is a recommendation stamped `PENDING_HUMAN_REVIEW`. It cannot act.
+- **Logging (Art. 12)** is a **hash-chained** `audit.jsonl`: every run and recommendation is
+  appended with a trace_id, timestamp, input-data hash, and the model+version that produced it.
+  Alter any past entry and the chain breaks — `verify()` returns `False`. The dashboard
+  re-verifies the chain live, using a standalone verifier that a test proves equivalent to the
+  compute-plane implementation, so the presentation plane can attest to integrity without
+  importing the system it's attesting to.
+- **Annex III self-classification** is machine-readable and rendered to a document mapping
+  Articles 9/11/12/13/14 to concrete mechanisms in the code.
+
+## The part most people skip: telling the truth about the model
+
+The forecaster is deterministic Prophet with a rolling-origin backtest, and the honest result
+is that **it does not beat a naïve baseline** (MASE ≈ 1.4, MAPE ≈ 17%). Rather than hide that,
+the project foregrounds it — because the deliverable isn't point accuracy, it's a **calibrated
+uncertainty interval** plus the audit trail around it. Raw Prophet intervals were
+over-confident (~72% coverage against a nominal 90%); an interval-calibration step lifts them
+toward nominal, and the fact that it's an in-sample calibration is disclosed rather than
+buried. The anomaly detector gets the same treatment: CUSUM thresholds are calibrated to a
+documented ~1% in-control false-alarm rate *per window length* via a Monte-Carlo table, with a
+≥60-sample baseline floor.
+
+That discipline was enforced, not assumed. The codebase went through **two rounds of external
+adversarial review**, each of which found real defects — inert data corruptions, tests that
+fired on the wrong signal, false-alarm calibration that collapsed on short baselines. The
+lesson that stuck: *internal reviews that measure comfortable margins miss what mutation-style
+and multi-seed tests catch.* A later defect proved the point — seeding the demo history exposed
+that the agent's remembered baseline was being fit on a 30-sample window, below CUSUM's
+60-sample floor, silently degrading every post-bootstrap run to `DATA_QUALITY`. The fix was at
+the root (decouple the baseline window from the detection window), locked with a regression test
+— not a patch over the symptom.
+
+## What it demonstrates
+
+- **Agentic autonomy** with genuine cross-run memory and self-scheduling.
+- **Statistically honest ML** — calibrated intervals, calibrated false-alarm rates, and results
+  reported straight, including where the model loses to naïve.
+- **LLM reasoning** with a keyless deterministic fallback, so the system is fully testable and
+  demonstrable without a key or network, and the audit trail records which model spoke.
+- **Regulatory engineering** — EU AI Act Annex III and GxP treated as a first-class,
+  cross-cutting concern that shaped the architecture, not a paragraph at the bottom of a README.
+
+## By the numbers
+
+| | |
+|---|---|
+| Data streams | 3 (clinical hero + QC + supply) |
+| Analysis DAG | 4 nodes (LangGraph) |
+| Forecast horizons | 30 / 60 / 90 days, 90% calibrated interval |
+| Tests | 117, keyless & offline |
+| External adversarial review rounds | 2 (all findings fixed & reproduction-verified) |
+| Deployed dashboard deps | 3 (`streamlit`, `pandas`, `plotly`) |

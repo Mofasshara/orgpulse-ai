@@ -1,0 +1,5 @@
+# Streamlit Cloud installs ONLY these — the dashboard is the presentation plane
+# and never imports the heavy compute stack (Prophet / LangGraph / scikit-learn).
+streamlit>=1.50
+pandas>=2.2
+plotly>=5.20
