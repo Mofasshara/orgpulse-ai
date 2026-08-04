@@ -63,6 +63,10 @@ def run_tick(
     CUSUM floor), and ``base_days >= max(60, days_per_period)`` so the very first tick has
     both a full detection window and a usable (>=60-sample) baseline.
     """
+    for name, val in (("tick_number", tick_number), ("days_per_period", days_per_period),
+                      ("baseline_days", baseline_days), ("base_days", base_days)):
+        if not isinstance(val, int) or isinstance(val, bool):
+            raise TypeError(f"{name} must be an int, got {type(val).__name__}: {val!r}")
     if tick_number < 0:
         raise ValueError(f"tick_number must be >= 0, got {tick_number}")
     if days_per_period <= 0:

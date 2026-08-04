@@ -54,23 +54,29 @@ def detect_node(state: PipelineState) -> DetectNodeOutput:
     Each KPI series is split into a >=90-point baseline and a 30-point recent
     window and run through detect_kpi. Series shorter than 120 are skipped.
     """
-    series_by_kpi: list[tuple[str, np.ndarray]] = []
-
+    # Each extractor pulls one KPI series from the (possibly malformed) input. Extraction and
+    # array conversion happen INSIDE the guard below so that a missing column, a 2-D/ragged
+    # column, or any schema corruption becomes a DATA_QUALITY finding rather than crashing the
+    # run — upholding the "bad data never crashes, never reads SAFE" contract at the node level.
+    extractors: list[tuple[str, callable]] = []
     if "clinical" in state:
-        clinical_series = series_from_generator(state["clinical"], "date", "daily_enrollment")["y"].to_numpy()
-        series_by_kpi.append(("daily_enrollment", clinical_series))
-
+        extractors.append(
+            ("daily_enrollment",
+             lambda: series_from_generator(state["clinical"], "date", "daily_enrollment")["y"].to_numpy())
+        )
     if "qc" in state:
-        qc_df = state["qc"]
-        series_by_kpi.append(("pass_rate", qc_df["pass_rate"].to_numpy()))
-        series_by_kpi.append(("calibration_offset", qc_df["calibration_offset"].to_numpy()))
-
+        extractors.append(("pass_rate", lambda: state["qc"]["pass_rate"].to_numpy()))
+        extractors.append(("calibration_offset", lambda: state["qc"]["calibration_offset"].to_numpy()))
     if "supply" in state:
-        series_by_kpi.append(("lead_time_days", state["supply"]["lead_time_days"].to_numpy()))
+        extractors.append(("lead_time_days", lambda: state["supply"]["lead_time_days"].to_numpy()))
 
     findings: list[KpiFinding] = []
-    for kpi, series in series_by_kpi:
-        finding = _kpi_finding(kpi, series)
+    for kpi, extract in extractors:
+        try:
+            finding = _kpi_finding(kpi, extract())
+        except (KeyError, ValueError, TypeError, IndexError):
+            finding = KpiFinding(kpi=kpi, severity=Severity.DATA_QUALITY.name,
+                                 detail="unusable input (missing/malformed data)", latest_value=None)
         if finding is not None:
             findings.append(finding)
 
@@ -104,8 +110,16 @@ def forecast_node(state: PipelineState) -> ForecastNodeOutput:
 
     if "clinical" in state:
         clinical_df = state["clinical"]
-        # Build daily series
-        daily_df = series_from_generator(clinical_df, "date", "daily_enrollment")
+        # Build daily series. Guard corrupt/unusable input: a non-finite or too-short hero
+        # series must not be fed to Prophet (it would crash or emit a meaningless forecast).
+        # Detection already flags such a stream DATA_QUALITY; here we simply publish no forecast.
+        try:
+            daily_df = series_from_generator(clinical_df, "date", "daily_enrollment")
+            y = daily_df["y"].to_numpy(dtype=float)
+        except (KeyError, ValueError, TypeError):
+            return {"forecast": forecast_result}
+        if len(y) < 120 or not np.isfinite(y).all():
+            return {"forecast": forecast_result}
 
         # Forecast at horizons 30, 60, 90
         fc = forecast_kpi(daily_df, "daily_enrollment", horizons=(30, 60, 90))

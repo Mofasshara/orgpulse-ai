@@ -170,7 +170,7 @@ def render_report(findings: Findings) -> str:
                 lower = data.get("lower", "N/A")
                 upper = data.get("upper", "N/A")
                 days = horizon[1:]
-                lines.append(f"- **{days} days:** {yhat} (95% CI: [{lower}, {upper}])")
+                lines.append(f"- **{days} days:** {yhat} (90% interval: [{lower}, {upper}])")
         lines.append("")
 
     # Recommendations

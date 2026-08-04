@@ -70,16 +70,26 @@ class HashChainedAuditLog:
         return [AuditEntry(**e) for e in self._read_raw()]
 
     def verify(self) -> bool:
+        # Fail closed on any malformed log (bad JSON, wrong shape) rather than raising.
+        try:
+            raw = self._read_raw()
+        except (json.JSONDecodeError, OSError):
+            return False
         prev_hash = _GENESIS
-        for i, e in enumerate(self._read_raw()):
-            if e.get("seq") != i or e.get("prev_hash") != prev_hash:
+        for i, e in enumerate(raw):
+            if not isinstance(e, dict):
                 return False
-            if _payload_hash(e["payload"]) != e.get("payload_hash"):
+            try:
+                if e.get("seq") != i or e.get("prev_hash") != prev_hash:
+                    return False
+                if _payload_hash(e["payload"]) != e.get("payload_hash"):
+                    return False
+                expected = _entry_hash(prev_hash, i, e["timestamp"], e["trace_id"], e["kind"], e["payload_hash"])
+                if expected != e.get("entry_hash"):
+                    return False
+                prev_hash = e["entry_hash"]
+            except (KeyError, TypeError, AttributeError):
                 return False
-            expected = _entry_hash(prev_hash, i, e["timestamp"], e["trace_id"], e["kind"], e["payload_hash"])
-            if expected != e.get("entry_hash"):
-                return False
-            prev_hash = e["entry_hash"]
         return True
 
     def reconstruct(self, trace_id: str) -> list[AuditEntry]:
