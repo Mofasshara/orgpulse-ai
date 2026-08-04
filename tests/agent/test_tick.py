@@ -89,6 +89,39 @@ def test_bootstrap_tick_with_corrupt_current_is_data_quality_not_safe(tmp_path, 
     assert f.overall_severity == "DATA_QUALITY" and f.alert is True
 
 
+def test_tick_survives_wrong_dtype_generator_output(tmp_path, monkeypatch):
+    """#2: a stringified/corrupt generator column must become DATA_QUALITY, not crash the tick."""
+    from orgpulse.agent import tick as tickmod
+    orig = tickmod.generate_qc
+    monkeypatch.setattr(tickmod, "generate_qc",
+                        lambda *a, **k: orig(*a, **k).assign(pass_rate="not-a-number"))
+    f = run_tick(BaselineMemory(tmp_path / "m.json"), 0, out_root=tmp_path / "runs",
+                 now="2026-08-04T07:00:00", offline=True)          # must not raise
+    sev = {kf.kpi: kf.severity for kf in f.kpi_findings}
+    assert sev["pass_rate"] == "DATA_QUALITY" and f.overall_severity == "DATA_QUALITY"
+
+
+def test_tick_audit_records_remembered_baseline_lineage(tmp_path):
+    """#5: the remembered baseline drives detection and is overwritten each tick, so it must be
+    in the recorded lineage. Two ticks identical except for remembered baseline must record
+    different baseline_input_hash (and produce different findings)."""
+    from orgpulse.detect.baseline import Baseline
+    from orgpulse.governance.audit import HashChainedAuditLog
+
+    def run_with_baseline(mean, out):
+        mem = BaselineMemory(tmp_path / f"m{mean}.json")
+        mem.save({k: Baseline(mean=mean, std=1.0, n=120)
+                  for k in ("daily_enrollment", "pass_rate", "calibration_offset", "lead_time_days")})
+        run_tick(mem, 1, out_root=out, now="2026-01-01T00:00:00", offline=True, seed=77)
+        entry = HashChainedAuditLog(out / "latest" / "audit.jsonl").entries()[0].payload
+        return entry["baseline_input_hash"], entry["input_data_hash"]
+
+    b_lo, in_lo = run_with_baseline(0.0, tmp_path / "A")
+    b_hi, in_hi = run_with_baseline(1000.0, tmp_path / "B")
+    assert in_lo == in_hi          # same seed/params -> same generated inputs
+    assert b_lo != b_hi            # ...but different remembered baseline IS in the lineage
+
+
 def test_corrupt_baseline_memory_fails_clearly(tmp_path):
     """A corrupt memory file must raise a clear diagnosis, not a raw JSONDecodeError mid-tick."""
     p = tmp_path / "m.json"

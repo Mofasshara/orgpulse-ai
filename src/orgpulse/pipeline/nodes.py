@@ -7,6 +7,7 @@ import numpy as np
 
 from orgpulse.detect.orchestrator import detect_kpi, overall_severity
 from orgpulse.detect.types import Severity
+from orgpulse.detect.validation import kpi_domain_reason
 from orgpulse.forecast.calibration import interval_calibration
 from orgpulse.forecast.prophet_forecaster import forecast_kpi, series_from_generator
 from orgpulse.pipeline.llm import LLMClient
@@ -37,6 +38,8 @@ def _kpi_finding(kpi: str, series) -> KpiFinding:
 
     - detail comes from the *driving* detector (the one whose severity == the max severity).
     - latest_value is a plain Python float (NaN/inf -> None) for JSON safety.
+    - a series shorter than 120 points, non-1-D, non-numeric, non-finite, or with any value
+      outside the KPI's real-world domain becomes DATA_QUALITY (never silently skipped).
     """
     try:
         s = np.asarray(series, dtype=float)
@@ -46,6 +49,11 @@ def _kpi_finding(kpi: str, series) -> KpiFinding:
         return data_quality_finding(kpi, f"unusable input ({s.ndim}-D, expected 1-D)")
     if len(s) < 120:  # need >=90 baseline + 30 recent
         return data_quality_finding(kpi, f"insufficient data ({len(s)} points < 120 required)")
+    if not np.isfinite(s).all():
+        return data_quality_finding(kpi, "non-finite values (NaN/inf)")
+    domain_bad = kpi_domain_reason(kpi, s)
+    if domain_bad is not None:
+        return data_quality_finding(kpi, f"impossible value: {domain_bad}")
     baseline, recent = s[:-30], s[-30:]
     results = detect_kpi(baseline, recent, kpi=kpi)  # returns DATA_QUALITY on non-finite data
     sev = overall_severity(results)
@@ -64,18 +72,25 @@ def detect_node(state: PipelineState) -> DetectNodeOutput:
     Supply KPI: lead_time_days
 
     Each KPI series is split into a >=90-point baseline and a 30-point recent
-    window and run through detect_kpi. Series shorter than 120 are skipped.
+    window and run through detect_kpi. Every expected KPI ALWAYS yields a finding: an
+    unusable series (short, non-numeric, non-finite, or out of domain) becomes DATA_QUALITY
+    rather than being skipped.
     """
     # Each extractor pulls one KPI series from the (possibly malformed) input. Extraction and
     # array conversion happen INSIDE the guard below so that a missing column, a 2-D/ragged
     # column, or any schema corruption becomes a DATA_QUALITY finding rather than crashing the
     # run — upholding the "bad data never crashes, never reads SAFE" contract at the node level.
+    def _clinical_series():
+        df = state["clinical"]
+        # Duplicate (date, site_id) rows would double-count the daily total. Reject them as
+        # unusable input rather than silently inflating enrollment.
+        if "site_id" in df.columns and df.duplicated(["date", "site_id"]).any():
+            raise ValueError("duplicate (date, site_id) clinical records")
+        return series_from_generator(df, "date", "daily_enrollment")["y"].to_numpy()
+
     extractors: list[tuple[str, callable]] = []
     if "clinical" in state:
-        extractors.append(
-            ("daily_enrollment",
-             lambda: series_from_generator(state["clinical"], "date", "daily_enrollment")["y"].to_numpy())
-        )
+        extractors.append(("daily_enrollment", _clinical_series))
     if "qc" in state:
         extractors.append(("pass_rate", lambda: state["qc"]["pass_rate"].to_numpy()))
         extractors.append(("calibration_offset", lambda: state["qc"]["calibration_offset"].to_numpy()))

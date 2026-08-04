@@ -13,6 +13,7 @@ from orgpulse.agent.baseline_memory import BaselineMemory
 from orgpulse.config import make_rng
 from orgpulse.detect.baseline import fit_baseline
 from orgpulse.detect.cusum import _MIN_BASELINE_N, cusum_detect
+from orgpulse.detect.validation import kpi_domain_reason
 from orgpulse.detect.orchestrator import overall_severity
 from orgpulse.detect.types import Severity
 from orgpulse.detect.zscore import zscore_detect
@@ -94,7 +95,13 @@ def run_tick(
     used_bootstrap = False
 
     for kpi, series in _kpi_series(clinical, qc, supply):
-        s = np.asarray(series, dtype=float)
+        # Guard dtype conversion (e.g. a stringified/corrupt generator column) so a bad KPI
+        # becomes DATA_QUALITY instead of crashing the whole tick.
+        try:
+            s = np.asarray(series, dtype=float)
+        except (ValueError, TypeError):
+            findings.append(data_quality_finding(kpi, "unusable input (non-numeric/ragged)"))
+            continue
 
         # Established trailing baseline (long window) becomes the NEXT tick's baseline; kept
         # longer than the detection window so CUSUM's ≥60-sample calibration holds. Saved
@@ -113,6 +120,10 @@ def run_tick(
         current = s[-n:]
         if not np.isfinite(current).all():
             findings.append(data_quality_finding(kpi, "non-finite values in current period"))
+            continue
+        domain_bad = kpi_domain_reason(kpi, current)
+        if domain_bad is not None:
+            findings.append(data_quality_finding(kpi, f"impossible value: {domain_bad}"))
             continue
 
         prior = remembered.get(kpi)
@@ -155,6 +166,15 @@ def run_tick(
     )
 
     model = "offline-stub" if offline else "claude-sonnet-5"
+    # The remembered baseline is a direct decision input (it drives detection) and is
+    # overwritten after each tick — hash it into the lineage so a remembered-baseline tick's
+    # decision is genuinely regenerable from what the audit records (Article 12).
+    baseline_input_hash = hashlib.sha256(
+        json.dumps(
+            {kpi: [b.mean, b.std, b.n] for kpi, b in sorted(remembered.items())},
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
 
     def _write(out_dir: Path, *, is_latest: bool) -> None:
         # Timestamped run dirs are durable, append-only history: never overwrite one (a
@@ -187,6 +207,7 @@ def run_tick(
             {"overall_severity": overall.name, "alert": findings_obj.alert, "generated_at": generated_at,
              "model": model, "offline": offline, "findings_hash": findings_hash,
              "report_hash": report_hash, "input_data_hash": input_data_hash,
+             "baseline_input_hash": baseline_input_hash,
              "seed": seed, "base_days": base_days, "days_per_period": days_per_period,
              "baseline_days": baseline_days, "tick_number": tick_number, "used_bootstrap": used_bootstrap},
             trace_id=run_id, timestamp=generated_at,

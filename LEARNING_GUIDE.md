@@ -400,11 +400,13 @@ an Isolation Forest detector is built and tested but not yet wired),
 Prophet forecasting with rolling-origin backtests reporting MASE and an in-sample
 interval calibration applied to the published band, then two LLM nodes for domain
 interpretation and a CAPA-framed
-recommendation. Governance is a hash-chained append-only audit log so any decision
-is reconstructable per EU AI Act Article 12, with human-oversight gating per
-Article 14. Deployment is split-plane: Hermes computes locally and publishes
-run artifacts; a lightweight Streamlit app on Streamlit Cloud just reads the
-latest run, so the heavy forecasting stack never has to deploy to the cloud."
+recommendation. Governance is a hash-chained append-only audit log that records the
+input lineage (seed, parameters, input-data hash, and the remembered-baseline hash)
+plus output-integrity hashes, so a decision can be regenerated and checked per EU AI
+Act Article 12, with human-oversight gating per Article 14. Deployment is split-plane:
+Hermes computes locally and publishes run artifacts; a lightweight Streamlit app on
+Streamlit Cloud just reads the latest run, so the heavy forecasting stack never has to
+deploy to the cloud."
 
 **Business version (executive / regulator)**
 "It's a proactive assistant for operations leaders. Today, problems in trial

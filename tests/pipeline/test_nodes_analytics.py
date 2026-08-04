@@ -134,6 +134,30 @@ def test_insufficient_kpi_is_data_quality_not_silently_omitted():
     assert det["overall_severity"] == "DATA_QUALITY"
 
 
+def test_impossible_domain_values_are_data_quality_not_safe():
+    """Semantic gap (#1): a consistently IMPOSSIBLE value (pass_rate>1, negative enrollment,
+    negative lead time) is statistically stable and previously read SAFE. It must be DATA_QUALITY."""
+    good = _state(200)
+
+    qc_bad = good["qc"].copy(); qc_bad["pass_rate"] = 1.5
+    sev = {f.kpi: f.severity for f in detect_node({"qc": qc_bad, "supply": good["supply"]})["kpi_findings"]}
+    assert sev["pass_rate"] == "DATA_QUALITY"
+
+    sup_bad = good["supply"].copy(); sup_bad["lead_time_days"] = -5.0
+    sev = {f.kpi: f.severity for f in detect_node({"qc": good["qc"], "supply": sup_bad})["kpi_findings"]}
+    assert sev["lead_time_days"] == "DATA_QUALITY"
+
+
+def test_duplicate_clinical_records_are_data_quality():
+    """#1: duplicate (date, site_id) rows double-count the daily total — reject as unusable."""
+    import pandas as pd
+    good = _state(200)
+    dup = pd.concat([good["clinical"], good["clinical"].iloc[[0]]], ignore_index=True)
+    det = detect_node({"clinical": dup, "qc": good["qc"], "supply": good["supply"]})
+    hero = next(f for f in det["kpi_findings"] if f.kpi == "daily_enrollment")
+    assert hero.severity == "DATA_QUALITY"
+
+
 def test_detect_node_survives_malformed_inputs_as_data_quality():
     """Schema-corrupt / 2-D KPI inputs must become DATA_QUALITY findings, not crash."""
     import numpy as np

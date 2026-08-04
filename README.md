@@ -113,8 +113,9 @@ Anthropic Claude (reasoning, optional) · Hermes (autonomy/scheduling) · Stream
 ## Tests
 
 ```bash
-uv run pytest -q      # 117 passing
+uv run pytest -q      # 145 passing
 ```
 
 Keyless and offline: no test needs `ANTHROPIC_API_KEY` or network access. The suite was
-hardened through two rounds of external adversarial review.
+hardened through six rounds of external adversarial review (the fifth forced a root-cause
+redesign of the fail-safe and audit-trust boundaries rather than another patch).

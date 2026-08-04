@@ -68,6 +68,8 @@ def verify_audit(audit_path: str | Path) -> bool:
         entries = load_audit(audit_path)
     except (json.JSONDecodeError, OSError):
         return False
+    if not entries:                       # an empty/missing log is NOT a verified log
+        return False
     prev_hash = _GENESIS
     for i, e in enumerate(entries):
         if not isinstance(e, dict):        # e.g. a bare JSON list/scalar line
@@ -127,11 +129,13 @@ def verify_run(run_dir: str | Path) -> tuple[bool, str]:
     if _sha256(findings_text) != findings_hash:
         return False, "findings.json does not match the audited findings hash (tampered)"
 
-    # report.md is a human-consumed artifact, so it is bound too (forging it must be caught).
+    # report.md is a human-consumed artifact, so it is REQUIRED to be bound (the current schema
+    # always records report_hash; a run entry without it, or a forged report, fails closed).
     report_hash = payload.get("report_hash")
-    if isinstance(report_hash, str):
-        if not report_path.exists() or _sha256(report_path.read_text()) != report_hash:
-            return False, "report.md does not match the audited report hash (tampered)"
+    if not isinstance(report_hash, str):
+        return False, "genesis run entry has no report hash"
+    if not report_path.exists() or _sha256(report_path.read_text()) != report_hash:
+        return False, "report.md does not match the audited report hash (tampered)"
 
     # Validate findings shape before indexing, then bind the recommendation COUNT so
     # tail-truncation is caught (a forward hash chain can't detect deleted trailing entries).

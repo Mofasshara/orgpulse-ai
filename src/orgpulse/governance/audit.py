@@ -75,6 +75,8 @@ class HashChainedAuditLog:
             raw = self._read_raw()
         except (json.JSONDecodeError, OSError):
             return False
+        if not raw:                       # an empty/missing log is NOT a verified record
+            return False
         prev_hash = _GENESIS
         for i, e in enumerate(raw):
             if not isinstance(e, dict):
