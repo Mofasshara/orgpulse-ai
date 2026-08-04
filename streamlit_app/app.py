@@ -34,7 +34,9 @@ st.set_page_config(page_title="OrgPulse AI — PharmaOps", page_icon="🧬", lay
 
 
 def _sev(name: str):
-    return SEV.get(name, SEV["SAFE"])
+    # Fail SAFE-LY, not to "Safe": an unknown or misspelled severity must never render as
+    # green. Treat anything unrecognized as a data-quality problem.
+    return SEV.get(name, SEV["DATA_QUALITY"])
 
 
 def _severity_chip(name: str) -> str:
@@ -57,8 +59,13 @@ if not (latest / "findings.json").exists():
 
 findings = data.load_findings(latest)
 history = data.load_history(RUNS_ROOT)
-audit_ok = data.verify_audit(latest / "audit.jsonl")
-audit_entries = data.load_audit(latest / "audit.jsonl")
+# verify_run binds the chain to the findings on screen (catches a forged findings.json),
+# not just the chain's internal consistency.
+audit_ok, audit_reason = data.verify_run(latest)
+try:
+    audit_entries = data.load_audit(latest / "audit.jsonl")
+except Exception:
+    audit_entries = []
 
 # ── Header ──────────────────────────────────────────────────────────────────
 st.title("🧬 OrgPulse AI — PharmaOps")
@@ -67,7 +74,7 @@ st.caption(
     "Decision support only — every recommendation is gated on human review (EU AI Act Art. 14)."
 )
 
-overall = findings.get("overall_severity", "SAFE")
+overall = findings.get("overall_severity") or "DATA_QUALITY"
 color, icon, label = _sev(overall)
 top = st.columns([2, 1, 1, 1])
 top[0].markdown(f"### {icon} Overall status: {label}")
@@ -128,10 +135,20 @@ with left:
             legend=dict(orientation="h", yanchor="bottom", y=1.0),
         )
         st.plotly_chart(fig, width="stretch")
+        cal = fc.get("calibration", {})
+        if cal.get("applied"):
+            rc = cal.get("raw_coverage")
+            rc_txt = f"~{rc:.0%}" if isinstance(rc, (int, float)) else "below nominal"
+            cal_txt = (
+                f"Interval is **in-sample-calibrated**: raw Prophet 90% intervals under-covered "
+                f"({rc_txt}), so they're widened by an in-sample factor of ~{cal.get('scale_factor', 1):.2f}. "
+                "Out-of-sample coverage is not validated (a production system would use split-conformal)."
+            )
+        else:
+            cal_txt = "Interval is the **raw** Prophet 90% band (history too short to calibrate)."
         st.caption(
-            "Prophet forecast with a calibrated 90% interval. Backtest is honest: this model does "
-            "**not** beat a naïve baseline (MASE ≈ 1.4) — the value is the interval + the audit trail, "
-            "not point accuracy."
+            cal_txt + " Backtest is honest: the model does **not** beat a naïve baseline "
+            "(MASE ≈ 1.4) — the value is the calibrated interval + the audit trail, not point accuracy."
         )
     else:
         st.info("No forecast in this run.")
@@ -166,9 +183,15 @@ gcol1, gcol2 = st.columns(2)
 with gcol1:
     st.subheader("Audit trail (EU AI Act Art. 12)")
     st.markdown(
-        ("✅ **Hash chain verified** — every logged decision is intact and reconstructable."
+        ("✅ **Verified & bound to findings** — the hash chain is intact and the displayed "
+         "findings match the audited input hash."
          if audit_ok else
-         "❌ **Tamper detected** — the audit chain does not verify.")
+         f"❌ **Verification failed** — {audit_reason}.")
+    )
+    st.caption(
+        "Detects corruption and naïve tampering (editing a past entry, or the findings, "
+        "breaks verification). It does not stop an attacker who can rewrite the whole file "
+        "and recompute the unkeyed chain — see the audit threat-model note in the case study."
     )
     if audit_entries:
         df = pd.DataFrame(

@@ -1,7 +1,7 @@
 # OrgPulse Data Quality Report
 
-**Run ID:** tick-3-2026-06-01T07:00:00
-**Generated:** 2026-06-01T07:00:00
+**Run ID:** tick-2-2026-05-01T07:00:00
+**Generated:** 2026-05-01T07:00:00
 
 🚨 **Overall Severity:** CRITICAL
 **🔔 ALERT TRIGGERED** — Human review required.
@@ -10,10 +10,10 @@
 
 | KPI | Severity | Detail | Latest Value |
 |-----|----------|--------|--------------|
-| daily_enrollment | WARNING | low CUSUM peak=5.76 (warn=5.12, crit=7.96, n=30); first cross idx 26 | 41.0 |
-| pass_rate | CRITICAL | low CUSUM peak=8.98 (warn=5.12, crit=7.96, n=30); first cross idx 22 | 0.9 |
-| calibration_offset | CRITICAL | high CUSUM peak=52.65 (warn=5.12, crit=7.96, n=30); first cross idx 3 | 1.1047388661180226 |
-| lead_time_days | SAFE | z=-0.23 (warn>=3.0, crit>=4.5) | 5.126739399254856 |
+| daily_enrollment | CRITICAL | high CUSUM peak=9.08 (warn=5.12, crit=7.96, n=30); first cross idx 22 | 54.0 |
+| pass_rate | SAFE | z=-0.47 (warn>=3.0, crit>=4.5) | 0.9375 |
+| calibration_offset | CRITICAL | high CUSUM peak=61.77 (warn=5.12, crit=7.96, n=30); first cross idx 3 | 0.9798371325300718 |
+| lead_time_days | CRITICAL | high CUSUM peak=10.37 (warn=5.12, crit=7.96, n=30); first cross idx 7 | 5.572996888813004 |
 
 ## Analysis
 
@@ -21,9 +21,9 @@ Automated interpretation (offline mode): the pipeline observed — KPI Findings:
 
 ## Forecast (Daily Enrollment)
 
-- **30 days:** 49.312590142961945 (95% CI: [39.44391761419518, 60.70192384775436])
-- **60 days:** 50.553118702229895 (95% CI: [39.71431003430083, 61.37440220343354])
-- **90 days:** 51.38050999585493 (95% CI: [39.97049638992332, 62.71471404955667])
+- **30 days:** 54.60976001274288 (95% CI: [38.7859553788471, 68.59048273432485])
+- **60 days:** 57.18918325322031 (95% CI: [41.02523323024609, 72.47968870473271])
+- **90 days:** 61.06941633735468 (95% CI: [43.33112467003036, 77.51669881706613])
 
 ## Recommendations
 
@@ -36,21 +36,21 @@ Open a CAPA review for 'daily_enrollment': confirm the signal against source dat
 
 > Decision support only — not an automated decision. A qualified human must review and approve before any action (EU AI Act Art. 14 human oversight).
 
-### Recommendation 2: pass_rate
+### Recommendation 2: calibration_offset
 
 **CAPA Frame:** CAPA-002
 **Status:** PENDING_HUMAN_REVIEW
 
-Open a CAPA review for 'pass_rate': confirm the signal against source data, assess whether an ICH E6(R3) deviation threshold is crossed, and, if confirmed, document root cause and corrective action. Escalate to the responsible quality owner for sign-off.
+Open a CAPA review for 'calibration_offset': confirm the signal against source data, assess whether an ICH E6(R3) deviation threshold is crossed, and, if confirmed, document root cause and corrective action. Escalate to the responsible quality owner for sign-off.
 
 > Decision support only — not an automated decision. A qualified human must review and approve before any action (EU AI Act Art. 14 human oversight).
 
-### Recommendation 3: calibration_offset
+### Recommendation 3: lead_time_days
 
 **CAPA Frame:** CAPA-003
 **Status:** PENDING_HUMAN_REVIEW
 
-Open a CAPA review for 'calibration_offset': confirm the signal against source data, assess whether an ICH E6(R3) deviation threshold is crossed, and, if confirmed, document root cause and corrective action. Escalate to the responsible quality owner for sign-off.
+Open a CAPA review for 'lead_time_days': confirm the signal against source data, assess whether an ICH E6(R3) deviation threshold is crossed, and, if confirmed, document root cause and corrective action. Escalate to the responsible quality owner for sign-off.
 
 > Decision support only — not an automated decision. A qualified human must review and approve before any action (EU AI Act Art. 14 human oversight).
 

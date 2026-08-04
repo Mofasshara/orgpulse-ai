@@ -43,7 +43,11 @@ def load_report(run_dir: str | Path) -> str:
 
 
 def load_audit(audit_path: str | Path) -> list[dict]:
-    """Return the audit entries (list of dicts) for one run, in sequence order."""
+    """Return the audit entries (list of dicts) for one run, in sequence order.
+
+    Malformed lines raise ``json.JSONDecodeError`` to the caller; ``verify_*`` treat that
+    as a verification failure rather than crashing the dashboard.
+    """
     path = Path(audit_path)
     if not path.exists():
         return []
@@ -55,18 +59,62 @@ def verify_audit(audit_path: str | Path) -> bool:
 
     Standalone re-implementation of ``orgpulse.governance.audit.HashChainedAuditLog.verify``
     so the dashboard stays free of the compute stack (proven equivalent in tests).
+    Malformed/partial logs fail closed (return False) instead of raising.
+
+    NOTE: this proves only the chain's *internal* consistency. It does NOT prove the log
+    is bound to the findings on screen — use :func:`verify_run` for that.
     """
+    try:
+        entries = load_audit(audit_path)
+    except (json.JSONDecodeError, OSError):
+        return False
     prev_hash = _GENESIS
-    for i, e in enumerate(load_audit(audit_path)):
-        if e.get("seq") != i or e.get("prev_hash") != prev_hash:
+    for i, e in enumerate(entries):
+        try:
+            if e.get("seq") != i or e.get("prev_hash") != prev_hash:
+                return False
+            if _payload_hash(e["payload"]) != e.get("payload_hash"):
+                return False
+            expected = _entry_hash(prev_hash, i, e["timestamp"], e["trace_id"], e["kind"], e["payload_hash"])
+            if expected != e.get("entry_hash"):
+                return False
+            prev_hash = e["entry_hash"]
+        except (KeyError, TypeError):
             return False
-        if _payload_hash(e["payload"]) != e.get("payload_hash"):
-            return False
-        expected = _entry_hash(prev_hash, i, e["timestamp"], e["trace_id"], e["kind"], e["payload_hash"])
-        if expected != e.get("entry_hash"):
-            return False
-        prev_hash = e["entry_hash"]
     return True
+
+
+def verify_run(run_dir: str | Path) -> tuple[bool, str]:
+    """Verify the audit chain AND bind it to the findings on screen.
+
+    Returns ``(ok, reason)``. Fails closed if: the chain doesn't verify; the log is
+    empty or its first entry isn't a genesis ``run`` entry; or — critically — the current
+    ``findings.json`` bytes don't hash to the ``input_hash`` the run entry attests to.
+    This closes the forged-``findings.json`` hole where editing only the findings (leaving
+    the intact chain untouched) would otherwise still show "verified".
+    """
+    run_dir = Path(run_dir)
+    findings_path = run_dir / "findings.json"
+    audit_path = run_dir / "audit.jsonl"
+
+    if not findings_path.exists():
+        return False, "findings.json missing"
+    if not verify_audit(audit_path):
+        return False, "audit chain does not verify"
+    try:
+        entries = load_audit(audit_path)
+    except (json.JSONDecodeError, OSError):
+        return False, "audit log unreadable"
+    if not entries:
+        return False, "audit log is empty"
+    genesis = entries[0]
+    if genesis.get("kind") != "run" or "input_hash" not in genesis.get("payload", {}):
+        return False, "no genesis run entry with an input hash"
+
+    actual = _sha256(findings_path.read_text())
+    if actual != genesis["payload"]["input_hash"]:
+        return False, "findings.json does not match the audited input hash (tampered)"
+    return True, "chain verified and bound to findings.json"
 
 
 def load_history(runs_root: str | Path) -> list[dict]:
@@ -90,7 +138,8 @@ def load_history(runs_root: str | Path) -> list[dict]:
             {
                 "run_id": d.get("run_id", child.name),
                 "generated_at": d.get("generated_at", child.name),
-                "overall_severity": d.get("overall_severity", "SAFE"),
+                # Fail-safe: a missing/blank severity is a data-quality problem, not "Safe".
+                "overall_severity": d.get("overall_severity") or "DATA_QUALITY",
                 "alert": bool(d.get("alert", False)),
                 "run_dir": str(child),
             }

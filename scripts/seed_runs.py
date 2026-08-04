@@ -28,13 +28,38 @@ _DATES = [
 ]
 
 
+def _seed_dir_names(n: int) -> list[str]:
+    # Must match run_tick's run-dir naming: f"tick-{tick}-{now}" with colons → dashes.
+    return [f"tick-{tick}-{now}".replace(":", "-") for tick, now in enumerate(_DATES[:n])]
+
+
 def main() -> None:
-    n = int(sys.argv[1]) if len(sys.argv) > 1 else len(_DATES)
+    args = [a for a in sys.argv[1:] if a != "--force"]
+    force = "--force" in sys.argv
+    n = int(args[0]) if args else len(_DATES)
     n = max(1, min(n, len(_DATES)))
 
-    for path in (RUNS, MEMORY):
-        if path.exists():
-            shutil.rmtree(path) if path.is_dir() else path.unlink()
+    # Delete ONLY what this script owns — never rmtree the shared runs/ tree, which may hold
+    # real durable runs or unrelated operator artifacts. Refuse (unless --force) if runs/
+    # contains run dirs we did not seed.
+    seeded = set(_seed_dir_names(n))
+    if RUNS.exists():
+        foreign = [
+            p.name for p in RUNS.iterdir()
+            if p.is_dir() and p.name != "latest" and p.name not in seeded
+        ]
+        if foreign and not force:
+            raise SystemExit(
+                f"runs/ contains {len(foreign)} run(s) not created by this seeder "
+                f"(e.g. {foreign[:3]}). Refusing to touch them. Re-run with --force to seed anyway "
+                "(only the seeded dirs + latest are replaced; foreign runs are left intact)."
+            )
+        for name in list(seeded) + ["latest"]:
+            target = RUNS / name
+            if target.exists():
+                shutil.rmtree(target)
+    if MEMORY.exists():
+        MEMORY.unlink()
 
     mem = BaselineMemory(MEMORY)
     for tick, now in enumerate(_DATES[:n]):

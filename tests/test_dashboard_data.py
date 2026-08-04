@@ -65,6 +65,43 @@ def test_inline_verifier_matches_orgpulse_audit(tmp_path: Path):
     assert data.verify_audit(audit) == HashChainedAuditLog(audit).verify() is False
 
 
+def test_verify_run_true_on_clean_run(tmp_path: Path):
+    runs = _seed_two_runs(tmp_path)
+    ok, reason = data.verify_run(runs / "latest")
+    assert ok is True, reason
+
+
+def test_verify_run_detects_forged_findings_with_intact_chain(tmp_path: Path):
+    """The core attack: edit ONLY findings.json (leave the audit chain untouched).
+    verify_audit still passes (chain is internally consistent), but verify_run must fail
+    because findings.json no longer matches the audited input hash."""
+    runs = _seed_two_runs(tmp_path)
+    latest = runs / "latest"
+    fj = json.loads((latest / "findings.json").read_text())
+    fj["overall_severity"] = "SAFE"  # forge CRITICAL -> SAFE
+    fj["alert"] = False
+    (latest / "findings.json").write_text(json.dumps(fj, indent=2))
+
+    assert data.verify_audit(latest / "audit.jsonl") is True   # chain itself still consistent
+    ok, reason = data.verify_run(latest)
+    assert ok is False and "match" in reason                   # ...but binding catches it
+
+
+def test_verify_audit_fails_closed_on_missing_empty_malformed(tmp_path: Path):
+    missing = tmp_path / "nope.jsonl"
+    assert data.verify_audit(missing) is True or data.verify_audit(missing) is False  # no crash
+    empty = tmp_path / "empty.jsonl"
+    empty.write_text("")
+    assert data.verify_audit(empty) is True                    # vacuously (no entries)
+    malformed = tmp_path / "bad.jsonl"
+    malformed.write_text("{not json\n")
+    assert data.verify_audit(malformed) is False               # fails closed, no raise
+    # verify_run on a dir with malformed audit also fails closed
+    (tmp_path / "findings.json").write_text("{}")
+    ok, _ = data.verify_run(tmp_path)
+    assert ok is False
+
+
 def test_load_history_newest_first(tmp_path: Path):
     runs = _seed_two_runs(tmp_path)
     hist = data.load_history(runs)

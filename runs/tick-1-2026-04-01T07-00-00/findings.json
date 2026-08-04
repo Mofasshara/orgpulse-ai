@@ -1,50 +1,58 @@
 {
-  "run_id": "tick-2-2026-05-01T07:00:00",
-  "generated_at": "2026-05-01T07:00:00",
+  "run_id": "tick-1-2026-04-01T07:00:00",
+  "generated_at": "2026-04-01T07:00:00",
   "overall_severity": "CRITICAL",
   "alert": true,
   "kpi_findings": [
     {
       "kpi": "daily_enrollment",
       "severity": "CRITICAL",
-      "detail": "high CUSUM peak=9.08 (warn=5.12, crit=7.96, n=30); first cross idx 22",
-      "latest_value": 54.0
+      "detail": "high CUSUM peak=10.59 (warn=5.12, crit=7.96, n=30); first cross idx 17",
+      "latest_value": 44.0
     },
     {
       "kpi": "pass_rate",
       "severity": "SAFE",
-      "detail": "z=-0.47 (warn>=3.0, crit>=4.5)",
-      "latest_value": 0.9375
+      "detail": "z=0.73 (warn>=3.0, crit>=4.5)",
+      "latest_value": 1.0
     },
     {
       "kpi": "calibration_offset",
       "severity": "CRITICAL",
-      "detail": "high CUSUM peak=61.77 (warn=5.12, crit=7.96, n=30); first cross idx 3",
-      "latest_value": 0.9798371325300718
+      "detail": "high CUSUM peak=66.39 (warn=5.12, crit=7.96, n=30); first cross idx 3",
+      "latest_value": 0.7871989506703393
     },
     {
       "kpi": "lead_time_days",
-      "severity": "CRITICAL",
-      "detail": "high CUSUM peak=10.37 (warn=5.12, crit=7.96, n=30); first cross idx 7",
-      "latest_value": 5.572996888813004
+      "severity": "WARNING",
+      "detail": "high CUSUM peak=7.21 (warn=5.12, crit=7.96, n=30); first cross idx 6",
+      "latest_value": 5.122132912638447
     }
   ],
   "forecast": {
     "daily_enrollment": {
+      "calibration": {
+        "applied": true,
+        "in_sample": true,
+        "scale_factor": 1.5181493180728682,
+        "raw_coverage": 0.7083333333333334,
+        "nominal": 0.9,
+        "note": "interval widened by an in-sample calibration factor; out-of-sample coverage not validated"
+      },
       "h30": {
-        "yhat": 54.60976001274288,
-        "lower": 42.907212959909096,
-        "upper": 64.94924974149436
+        "yhat": 54.656969449077195,
+        "lower": 39.08889538760179,
+        "upper": 71.74406863502486
       },
       "h60": {
-        "yhat": 57.18918325322031,
-        "lower": 45.23508055289273,
-        "upper": 68.49732713188253
+        "yhat": 59.38855159464471,
+        "lower": 41.18175420475707,
+        "upper": 77.03361405155454
       },
       "h90": {
-        "yhat": 61.06941633735468,
-        "lower": 47.95100406695206,
-        "upper": 73.23305849315935
+        "yhat": 64.15868995468153,
+        "lower": 46.61743732083025,
+        "upper": 81.20944286050587
       }
     }
   },

@@ -14,7 +14,7 @@ flowchart TB
         GEN["Synthetic streams<br/>clinical · QC · supply"]
         subgraph DAG["LangGraph analysis DAG"]
             direction LR
-            D["detect<br/>Z-score · CUSUM · IsolationForest"] --> F["forecast<br/>Prophet 30/60/90d + intervals"]
+            D["detect<br/>Z-score · CUSUM"] --> F["forecast<br/>Prophet 30/60/90d + calibrated interval"]
             F --> A["analyst<br/>LLM interpretation"]
             A --> R["recommend<br/>human-gated CAPA"]
         end
@@ -64,11 +64,14 @@ alive**: the dashboard has no model to run and no key to hold — it renders com
 
 `detect → forecast → analyst → recommend`, a typed `StateGraph`:
 
-1. **detect** — Z-score + window-calibrated CUSUM (+ IsolationForest) per KPI against the
-   *remembered* baseline. Corrupt/insufficient data surfaces as `DATA_QUALITY`, which
-   **dominates** overall severity — it never silently passes as "all clear".
+1. **detect** — Z-score + window-calibrated CUSUM per KPI against the *remembered* baseline.
+   Corrupt/insufficient data surfaces as `DATA_QUALITY`, which **dominates** overall
+   severity — it never silently passes as "all clear". (Isolation Forest is built but not
+   wired — see [Detector status](#detector-status).)
 2. **forecast** — deterministic Prophet on the hero KPI (`daily_enrollment`): 30/60/90-day
-   point forecast with a calibrated 90% interval. Backtested honestly (it does *not* beat naïve).
+   point forecast with an **in-sample-calibrated** 90% interval (the calibration factor is
+   applied to the published bounds, not just diagnosed). Backtested honestly (it does *not*
+   beat naïve; out-of-sample interval coverage is not claimed).
 3. **analyst** — an LLM turns the numbers into a GxP-framed interpretation. Offline
    deterministic stub by default (keyless); Claude Sonnet when `ANTHROPIC_API_KEY` is set.
 4. **recommend** — a human-gated CAPA recommendation per anomaly, each
@@ -81,14 +84,51 @@ Each tick detects the **recent period** (30 days) against the **established base
 (a 120-day trailing window) remembered from the previous tick, then writes the new baseline
 back. The baseline window is deliberately longer than the detection window so CUSUM's
 false-alarm calibration (which needs ≥60 samples) always holds — otherwise every
-post-bootstrap tick would degrade to `DATA_QUALITY`.
+post-bootstrap tick would degrade to `DATA_QUALITY`. `run_tick` validates these
+preconditions at entry (`baseline_days ≥ 60`, `base_days ≥ max(60, days_per_period)`) and
+never persists a baseline below the 60-sample floor.
+
+**What "remembered" means (and doesn't).** The agent remembers baseline **statistics**
+(mean/std/n per KPI), not raw data. In this synthetic prototype the generators produce a
+**fresh realization at the requested horizon on each tick** — a longer horizon is a new draw
+from the same data-generating process, not an append to the previous tick's exact series. So
+a tick detects a new realization's recent period against summary statistics carried over from
+the previous realization. Detection stays valid because both realizations share the same
+underlying process (a structural break lives in the process and appears in every realization
+at the same point), but this is deliberately **not** an append-only "one evolving world". A
+production deployment would persist and append real observed data (or use counter-based,
+date-keyed RNG) so history is byte-stable across horizons; that is out of scope here.
+
+### Detector status
+
+| Detector | Status |
+|----------|--------|
+| Baseline (mean/std/n) | Live |
+| Z-score | Live — wired into the detection node |
+| Window-calibrated CUSUM | Live — wired into the detection node |
+| Isolation Forest (`detect/isolation.py`) | **Built & unit-tested, NOT wired** into the live path; no multivariate orchestration yet |
+
+The README and diagram reflect the *live* stack (Z-score + CUSUM). Isolation Forest is
+retained as a tested component pending a multivariate integration; it does not run in the
+current pipeline.
 
 ## Governance is not a feature — it's a cross-cut
 
 - **Art. 12 logging** → every run and recommendation is appended to a **hash-chained**
-  `audit.jsonl`; altering any past entry breaks the chain and `verify()` returns `False`.
-  The dashboard re-verifies the chain live (with a standalone verifier proven equivalent to
-  the compute-plane implementation in tests).
+  `audit.jsonl`, and each run entry records the SHA-256 `input_hash` of the exact
+  `findings.json` it attests to. The dashboard's `verify_run` checks both the chain *and*
+  that the displayed `findings.json` still hashes to that `input_hash` — so editing the
+  findings alone (leaving the chain intact) is caught. The standalone verifier is proven
+  equivalent to the compute-plane implementation in tests, and fails closed on
+  missing/empty/malformed logs.
+
+  **Threat model (stated honestly):** an *unkeyed* hash chain stored in the same writable
+  file detects **accidental corruption and naïve tampering** (editing a past entry, or the
+  findings, breaks verification). It does **not** stop an adversary with write access who
+  rewrites the whole file and recomputes the chain forward using the public algorithm — that
+  requires a signature under a key the artifact writer doesn't hold, or anchoring the terminal
+  hash in a separate trusted store. Keyed signing is deliberately out of scope for this
+  keyless-by-default prototype and is noted as future work.
 - **Art. 14 human oversight** → the system is *architecturally* prohibited from acting; the
   strongest output it can emit is a recommendation awaiting a qualified human.
 - **Annex III self-classification** → machine-readable (`governance/classification.py`) and

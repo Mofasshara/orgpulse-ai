@@ -1,50 +1,58 @@
 {
-  "run_id": "tick-5-2026-08-03T07:00:00",
-  "generated_at": "2026-08-03T07:00:00",
+  "run_id": "tick-2-2026-05-01T07:00:00",
+  "generated_at": "2026-05-01T07:00:00",
   "overall_severity": "CRITICAL",
   "alert": true,
   "kpi_findings": [
     {
       "kpi": "daily_enrollment",
       "severity": "CRITICAL",
-      "detail": "low CUSUM peak=21.76 (warn=5.12, crit=7.96, n=30); first cross idx 5",
-      "latest_value": 50.0
+      "detail": "high CUSUM peak=9.08 (warn=5.12, crit=7.96, n=30); first cross idx 22",
+      "latest_value": 54.0
     },
     {
       "kpi": "pass_rate",
       "severity": "SAFE",
-      "detail": "z=-0.26 (warn>=3.0, crit>=4.5)",
-      "latest_value": 0.9285714285714286
+      "detail": "z=-0.47 (warn>=3.0, crit>=4.5)",
+      "latest_value": 0.9375
     },
     {
       "kpi": "calibration_offset",
       "severity": "CRITICAL",
-      "detail": "high CUSUM peak=47.25 (warn=5.12, crit=7.96, n=30); first cross idx 4",
-      "latest_value": 1.4342095627135805
+      "detail": "high CUSUM peak=61.77 (warn=5.12, crit=7.96, n=30); first cross idx 3",
+      "latest_value": 0.9798371325300718
     },
     {
       "kpi": "lead_time_days",
-      "severity": "SAFE",
-      "detail": "z=-0.50 (warn>=3.0, crit>=4.5)",
-      "latest_value": 4.559527803117606
+      "severity": "CRITICAL",
+      "detail": "high CUSUM peak=10.37 (warn=5.12, crit=7.96, n=30); first cross idx 7",
+      "latest_value": 5.572996888813004
     }
   ],
   "forecast": {
     "daily_enrollment": {
+      "calibration": {
+        "applied": true,
+        "in_sample": true,
+        "scale_factor": 1.3521675719358912,
+        "raw_coverage": 0.7,
+        "nominal": 0.9,
+        "note": "interval widened by an in-sample calibration factor; out-of-sample coverage not validated"
+      },
       "h30": {
-        "yhat": 44.0457505846532,
-        "lower": 32.590957486502,
-        "upper": 55.18540453580102
+        "yhat": 54.60976001274288,
+        "lower": 38.7859553788471,
+        "upper": 68.59048273432485
       },
       "h60": {
-        "yhat": 43.55085932204261,
-        "lower": 31.742012021787332,
-        "upper": 54.74440480979962
+        "yhat": 57.18918325322031,
+        "lower": 41.02523323024609,
+        "upper": 72.47968870473271
       },
       "h90": {
-        "yhat": 44.05486098536907,
-        "lower": 33.12179038258045,
-        "upper": 55.55216191569101
+        "yhat": 61.06941633735468,
+        "lower": 43.33112467003036,
+        "upper": 77.51669881706613
       }
     }
   },
@@ -61,6 +69,13 @@
       "kpi": "calibration_offset",
       "text": "Open a CAPA review for 'calibration_offset': confirm the signal against source data, assess whether an ICH E6(R3) deviation threshold is crossed, and, if confirmed, document root cause and corrective action. Escalate to the responsible quality owner for sign-off.",
       "capa_frame": "CAPA-002",
+      "disclaimer": "Decision support only \u2014 not an automated decision. A qualified human must review and approve before any action (EU AI Act Art. 14 human oversight).",
+      "review_status": "PENDING_HUMAN_REVIEW"
+    },
+    {
+      "kpi": "lead_time_days",
+      "text": "Open a CAPA review for 'lead_time_days': confirm the signal against source data, assess whether an ICH E6(R3) deviation threshold is crossed, and, if confirmed, document root cause and corrective action. Escalate to the responsible quality owner for sign-off.",
+      "capa_frame": "CAPA-003",
       "disclaimer": "Decision support only \u2014 not an automated decision. A qualified human must review and approve before any action (EU AI Act Art. 14 human oversight).",
       "review_status": "PENDING_HUMAN_REVIEW"
     }
