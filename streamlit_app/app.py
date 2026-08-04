@@ -57,15 +57,9 @@ if not (latest / "findings.json").exists():
     )
     st.stop()
 
-findings = data.load_findings(latest)
-history = data.load_history(RUNS_ROOT)
-# verify_run binds the chain to the findings on screen (catches a forged findings.json),
-# not just the chain's internal consistency.
+# verify_run binds the chain to the findings on screen (catches a forged findings.json) and
+# validates shape/parse — so it is safe to call BEFORE parsing findings.json ourselves.
 audit_ok, audit_reason = data.verify_run(latest)
-try:
-    audit_entries = data.load_audit(latest / "audit.jsonl")
-except Exception:
-    audit_entries = []
 
 # ── Header (untrusted chrome only) ──────────────────────────────────────────
 st.title("🧬 OrgPulse AI — PharmaOps")
@@ -74,9 +68,9 @@ st.caption(
     "Decision support only — every recommendation is gated on human review (EU AI Act Art. 14)."
 )
 
-# ── Verify FIRST, before ANY operational status is computed or displayed ─────
-# If the run can't be verified and bound to its audit trail the findings are UNTRUSTED:
-# no severity, no status, no numbers are shown — the user never sees forged data as fact.
+# ── Verify FIRST, before findings are even PARSED or any status is shown ─────
+# A malformed/forged findings.json must never be parsed into an operational view: on failure
+# we show an error with the RAW (unparsed) text and stop. Nothing derived from findings runs.
 if not audit_ok:
     st.error(
         f"⛔ **This run is UNVERIFIED and must not be trusted** — {audit_reason}. "
@@ -85,10 +79,20 @@ if not audit_ok:
         icon="⛔",
     )
     with st.expander("Show unverified raw findings (not an operational status)"):
-        st.json(findings)
+        try:
+            st.code((latest / "findings.json").read_text()[:5000], language="json")
+        except OSError:
+            st.write("(findings.json is unreadable)")
     st.stop()
 
-# Only past this gate is anything derived from findings rendered.
+# Past the gate, verify_run has confirmed findings.json parses to an object — safe to load.
+findings = data.load_findings(latest)
+history = data.load_history(RUNS_ROOT)
+try:
+    audit_entries = data.load_audit(latest / "audit.jsonl")
+except Exception:
+    audit_entries = []
+
 overall = findings.get("overall_severity") or "DATA_QUALITY"
 color, icon, label = _sev(overall)
 top = st.columns([2, 1, 1, 1])

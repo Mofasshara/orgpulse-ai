@@ -44,13 +44,16 @@ Most projects bolt compliance on at the end as a disclaimer. Here it's a cross-c
 
 - **Human oversight (Art. 14)** is *architectural*, not advisory: the strongest thing the
   system can emit is a recommendation stamped `PENDING_HUMAN_REVIEW`. It cannot act.
-- **Logging (Art. 12)** is a **hash-chained** `audit.jsonl`: every run and recommendation is
-  appended with a trace_id, timestamp, input-data hash, and the model+version that produced it.
-  The dashboard doesn't just re-verify the chain — it verifies that the `findings.json` on
-  screen still hashes to the `input_hash` the chain attests to, so editing the findings alone
-  is caught. The standalone verifier is proven equivalent to the compute-plane implementation
-  in tests (and fails closed on missing/malformed logs), so the presentation plane can attest
-  to integrity without importing the system it's attesting to. **Threat model, stated plainly:**
+- **Logging (Art. 12)** is a **hash-chained** `audit.jsonl`: the run entry records the input
+  lineage — the data-generation `seed` and parameters, a `input_data_hash` of the actual input
+  frames, and (for a remembered-baseline tick) a `baseline_input_hash` of the exact baseline that
+  drove detection — plus output-integrity hashes (`findings_hash`, `report_hash`), the
+  model+version, and a timestamp. The dashboard doesn't just re-verify the chain — it verifies
+  that the `findings.json` and `report.md` on screen still hash to what the chain attests to (so
+  editing either is caught) and that the recommendation count matches. The standalone verifier is
+  proven equivalent to the compute-plane implementation in tests, and both fail closed on
+  missing/empty/malformed logs, so the presentation plane can attest to integrity without
+  importing the system it's attesting to. **Threat model, stated plainly:**
   an unkeyed chain in a writable file catches accidental corruption and naïve tampering; it does
   not stop an adversary who rewrites the whole file and recomputes the chain — that needs keyed
   signing or an external anchor, which is noted as future work, not claimed as done.
@@ -71,9 +74,11 @@ prediction. The anomaly detector gets the same treatment: CUSUM thresholds are c
 documented ~1% in-control false-alarm rate *per window length* via a Monte-Carlo table, with a
 ≥60-sample baseline floor.
 
-That discipline was enforced, not assumed. The codebase went through **two rounds of external
+That discipline was enforced, not assumed. The codebase went through **six rounds of external
 adversarial review**, each of which found real defects — inert data corruptions, tests that
-fired on the wrong signal, false-alarm calibration that collapsed on short baselines. The
+fired on the wrong signal, false-alarm calibration that collapsed on short baselines, fail-open
+SAFE paths, and impossible-value gaps — the last of which forced a root-cause redesign rather than
+another patch. The
 lesson that stuck: *internal reviews that measure comfortable margins miss what mutation-style
 and multi-seed tests catch.* A later defect proved the point — seeding the demo history exposed
 that the agent's remembered baseline was being fit on a 30-sample window, below CUSUM's
@@ -98,6 +103,6 @@ the root (decouple the baseline window from the detection window), locked with a
 | Data streams | 3 (clinical hero + QC + supply) |
 | Analysis DAG | 4 nodes (LangGraph) |
 | Forecast horizons | 30 / 60 / 90 days, 90% in-sample-calibrated interval |
-| Tests | 117, keyless & offline |
-| External adversarial review rounds | 2 (all findings fixed & reproduction-verified) |
+| Tests | 145, keyless & offline |
+| External adversarial review rounds | 6 (all findings fixed & reproduction-verified; round 5 forced a redesign) |
 | Deployed dashboard deps | 3 (`streamlit`, `pandas`, `plotly`) |

@@ -104,7 +104,9 @@ def test_verify_audit_fails_closed_on_missing_empty_malformed(tmp_path: Path):
 
     empty = tmp_path / "empty.jsonl"
     empty.write_text("")
-    assert data.verify_audit(empty) is True                    # vacuously (no entries)
+    assert data.verify_audit(empty) is False                   # an empty log is NOT verified
+    missing = tmp_path / "nope.jsonl"
+    assert data.verify_audit(missing) is False                 # nor a missing one
     for bad in ("{not json\n", "[]\n", "123\n", '{"seq": 0}\n'):
         p = tmp_path / "bad.jsonl"
         p.write_text(bad)

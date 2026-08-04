@@ -115,14 +115,17 @@ current pipeline.
 ## Governance is not a feature — it's a cross-cut
 
 - **Art. 12 logging** → every run and recommendation is appended to a **hash-chained**
-  `audit.jsonl`, and each run entry records the SHA-256 `input_hash` of the exact
-  `findings.json` it attests to. The dashboard's `verify_run` checks the chain, that the
-  displayed `findings.json` still hashes to that `input_hash` (so editing the findings alone is
-  caught), AND that the number of logged recommendation entries matches the count in
-  `findings.json` (so deleting trailing recommendation records — which a forward hash chain
-  can't detect on its own — is caught too). Both verifiers (dashboard and compute-plane) fail
-  closed on malformed logs, and `verify_run` fails closed on missing/empty logs; a proven-
-  equivalence test guards against drift between the two implementations.
+  `audit.jsonl`. The run entry records the input **lineage** — the generation `seed` and
+  parameters, an `input_data_hash` of the actual input frames, and (for a remembered-baseline
+  tick) a `baseline_input_hash` of the baseline that drove detection — plus output-integrity
+  hashes `findings_hash` and `report_hash`, and the model+version. The dashboard's `verify_run`
+  checks the chain; that the displayed `findings.json` AND `report.md` still hash to what the
+  run entry attests to (so editing either is caught); and that the number of logged
+  recommendation entries matches the count in `findings.json` (so deleting trailing records —
+  which a forward hash chain can't detect on its own — is caught too). Both verifiers (dashboard
+  and compute-plane) fail closed on missing/empty/malformed logs; a proven-equivalence test
+  guards against drift between the two implementations. So a decision can be **regenerated** from
+  the recorded lineage and its outputs checked against the logged hashes.
 
   **Threat model (stated honestly):** an *unkeyed* hash chain stored in the same writable
   file detects **accidental corruption and naïve tampering** (editing a past entry, or the
