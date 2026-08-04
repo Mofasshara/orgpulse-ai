@@ -391,9 +391,11 @@ EU AI Act bar."
 "Two-tier orchestration. Hermes is the outer autonomic loop — cron-triggered,
 holds baselines in persistent memory across runs, and invokes the pipeline as a
 tool. The inner pipeline is a LangGraph DAG with a shared state object: anomaly
-detection (CUSUM + Z-score + Isolation Forest against the remembered baseline),
-Prophet forecasting with rolling-origin backtests reporting MASE and interval
-calibration, then two LLM nodes for domain interpretation and a CAPA-framed
+detection (window-calibrated CUSUM + Z-score against the remembered baseline;
+an Isolation Forest detector is built and tested but not yet wired),
+Prophet forecasting with rolling-origin backtests reporting MASE and an in-sample
+interval calibration applied to the published band, then two LLM nodes for domain
+interpretation and a CAPA-framed
 recommendation. Governance is a hash-chained append-only audit log so any decision
 is reconstructable per EU AI Act Article 12, with human-oversight gating per
 Article 14. Deployment is split-plane: Hermes computes locally and publishes
