@@ -129,6 +129,10 @@ def run_tick(
         (out_dir / "findings.json").write_text(fj)
         (out_dir / "report.md").write_text(render_report(findings_obj))
         input_hash = hashlib.sha256(fj.encode("utf-8")).hexdigest()
+        # Each run dir holds exactly THIS run: clear any prior audit log (the reusable
+        # `latest/` dir would otherwise accumulate across ticks and diverge from
+        # findings.json/report.md). Durable per-run records live in the timestamped dirs.
+        (out_dir / "audit.jsonl").unlink(missing_ok=True)
         audit = HashChainedAuditLog(out_dir / "audit.jsonl")
         audit.append(
             "run",

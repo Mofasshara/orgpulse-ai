@@ -38,3 +38,7 @@ def test_tick1_uses_remembered_baseline(tmp_path):
     ]
     assert (tmp_path / "m.json").exists() and set(mem.load()) == set(saved0)  # memory persisted+updated
     assert f1.run_id.startswith("tick-1-")
+    # runs/latest mirrors exactly the LATEST run — audit log does not accumulate across ticks
+    latest_audit = HashChainedAuditLog(tmp_path / "runs" / "latest" / "audit.jsonl")
+    assert latest_audit.entries()  # non-empty
+    assert all(e.trace_id.startswith(f1.run_id) for e in latest_audit.entries())

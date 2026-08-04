@@ -45,7 +45,7 @@ flowchart TB
     FJ & RM & AJ --> DASH
     R -. logged .-> AUD
     AUD --- AJ
-    HG -. gates .- R
+    HG -. gates .-> R
 
     HERMES["⏰ Hermes cron / SKILL.md ×3"] -. triggers .-> GEN
 ```
