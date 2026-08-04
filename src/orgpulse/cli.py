@@ -49,5 +49,46 @@ def generate(
         typer.echo(f"wrote {name}: {p}")
 
 
+def write_run(out: Path, days: int, seed: int, offline: bool):
+    """Generate the three streams, run the analysis DAG, and write findings.json + report.md.
+
+    Returns the Findings object. Offline (keyless) by default.
+    """
+    if days < 1:
+        raise ValueError("days must be >= 1")
+    import json
+
+    # Lazy import so `orgpulse generate` doesn't pull in Prophet/LangGraph.
+    from orgpulse.pipeline.graph import render_report, run_pipeline
+
+    out.mkdir(parents=True, exist_ok=True)
+    start = date(2026, 1, 1)
+    clinical = generate_clinical(start, days, make_rng(seed))
+    qc = generate_qc(start, days, make_rng(seed + 1))
+    supply = generate_supply(start, days, make_rng(seed + 2))
+    findings = run_pipeline(clinical, qc, supply, offline=offline)
+    (out / "findings.json").write_text(
+        json.dumps(findings.to_json_dict(), indent=2, allow_nan=False)
+    )
+    (out / "report.md").write_text(render_report(findings))
+    return findings
+
+
+@app.command()
+def run(
+    days: int = typer.Option(260, min=1, help="Days of data to generate and analyze"),
+    seed: int = typer.Option(42, help="Random seed"),
+    offline: bool = typer.Option(
+        True, "--offline/--online",
+        help="Offline deterministic LLM stub (keyless, default) vs Claude via API key",
+    ),
+    out: str = typer.Option("runs/latest", help="Output directory for findings.json + report.md"),
+) -> None:
+    """Run the analysis DAG end-to-end and write findings.json + report.md."""
+    findings = write_run(out=Path(out), days=days, seed=seed, offline=offline)
+    typer.echo(f"overall severity: {findings.overall_severity}   alert: {findings.alert}")
+    typer.echo(f"wrote {out}/findings.json and {out}/report.md")
+
+
 if __name__ == "__main__":
     app()
