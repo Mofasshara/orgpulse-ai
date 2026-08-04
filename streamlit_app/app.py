@@ -67,23 +67,16 @@ try:
 except Exception:
     audit_entries = []
 
-# ── Header ──────────────────────────────────────────────────────────────────
+# ── Header (untrusted chrome only) ──────────────────────────────────────────
 st.title("🧬 OrgPulse AI — PharmaOps")
 st.caption(
     "Autonomous organizational-intelligence agent for regulated pharma operations. "
     "Decision support only — every recommendation is gated on human review (EU AI Act Art. 14)."
 )
 
-overall = findings.get("overall_severity") or "DATA_QUALITY"
-color, icon, label = _sev(overall)
-top = st.columns([2, 1, 1, 1])
-top[0].markdown(f"### {icon} Overall status: {label}")
-top[1].metric("Run", findings.get("run_id", "—").split("-")[1] if "-" in findings.get("run_id", "") else "—")
-top[2].metric("Generated", findings.get("generated_at", "—")[:10])
-top[3].metric("Audit chain", "verified ✅" if audit_ok else "TAMPER ❌")
-
-# Fail closed: if the run can't be verified and bound to its audit trail, the findings are
-# UNTRUSTED — never render them as a valid operational status (especially not a green all-clear).
+# ── Verify FIRST, before ANY operational status is computed or displayed ─────
+# If the run can't be verified and bound to its audit trail the findings are UNTRUSTED:
+# no severity, no status, no numbers are shown — the user never sees forged data as fact.
 if not audit_ok:
     st.error(
         f"⛔ **This run is UNVERIFIED and must not be trusted** — {audit_reason}. "
@@ -94,6 +87,15 @@ if not audit_ok:
     with st.expander("Show unverified raw findings (not an operational status)"):
         st.json(findings)
     st.stop()
+
+# Only past this gate is anything derived from findings rendered.
+overall = findings.get("overall_severity") or "DATA_QUALITY"
+color, icon, label = _sev(overall)
+top = st.columns([2, 1, 1, 1])
+top[0].markdown(f"### {icon} Overall status: {label}")
+top[1].metric("Run", findings.get("run_id", "—").split("-")[1] if "-" in findings.get("run_id", "") else "—")
+top[2].metric("Generated", findings.get("generated_at", "—")[:10])
+top[3].metric("Audit chain", "verified ✅")
 
 if findings.get("alert"):
     st.error(f"🚨 Alert raised — overall severity **{label}**. Human review required before any action.", icon="🚨")
@@ -229,7 +231,9 @@ with gcol2:
 if history:
     st.divider()
     st.subheader("Run history")
-    hist_df = pd.DataFrame(history)[["generated_at", "overall_severity", "alert", "run_id"]]
+    hist_df = pd.DataFrame(history)[["generated_at", "verified", "overall_severity", "alert", "run_id"]]
     st.dataframe(hist_df, hide_index=True, width="stretch")
+    if not all(r["verified"] for r in history):
+        st.caption("⚠️ Rows marked **UNVERIFIED** did not match their audit trail — their status is not trustworthy.")
 
 st.caption("OrgPulse AI — PharmaOps · synthetic data · decision-support prototype · not a medical device.")

@@ -72,6 +72,23 @@ def test_run_tick_rejects_non_integer_params(tmp_path):
         run_tick(mem, 0, baseline_days=60.5, out_root=tmp_path / "runs", now="2026-08-04T07:00:00", offline=True)
 
 
+def test_bootstrap_tick_with_corrupt_current_is_data_quality_not_safe(tmp_path, monkeypatch):
+    """Fail-open regression (#3): on the bootstrap tick (no remembered baseline) run_tick set
+    SAFE unconditionally, without validating the current data. Corrupt current data must be
+    DATA_QUALITY + alert, even with no prior baseline."""
+    import numpy as np
+    from orgpulse.agent import tick as tickmod
+
+    orig = tickmod.generate_qc
+    monkeypatch.setattr(tickmod, "generate_qc",
+                        lambda *a, **k: orig(*a, **k).assign(pass_rate=np.nan))
+    f = run_tick(BaselineMemory(tmp_path / "m.json"), 0, out_root=tmp_path / "runs",
+                 now="2026-08-04T07:00:00", offline=True)
+    sev = {kf.kpi: kf.severity for kf in f.kpi_findings}
+    assert sev["pass_rate"] == "DATA_QUALITY"          # corrupt current, no baseline -> DQ (not SAFE)
+    assert f.overall_severity == "DATA_QUALITY" and f.alert is True
+
+
 def test_corrupt_baseline_memory_fails_clearly(tmp_path):
     """A corrupt memory file must raise a clear diagnosis, not a raw JSONDecodeError mid-tick."""
     p = tmp_path / "m.json"

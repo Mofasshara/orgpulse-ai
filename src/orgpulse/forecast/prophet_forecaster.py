@@ -22,10 +22,13 @@ def _silence_prophet_logs() -> None:
 
 
 def series_from_generator(df: pd.DataFrame, date_col: str, value_col: str) -> pd.DataFrame:
-    # min_count=1 so a date whose values are ALL NaN aggregates to NaN, not 0.0. Otherwise
-    # an all-NaN (corrupt) enrollment stream would silently become a valid-looking 0 and pass
-    # as SAFE — the downstream finite-data validation must be able to see the NaN.
-    s = df.groupby(date_col)[value_col].sum(min_count=1).sort_index()
+    # A date's total is only trustworthy if EVERY contributing row is present: if ANY site is
+    # NaN, the day's total is unknown → NaN (not a partial sum). A plain sum (even min_count=1)
+    # would silently drop the missing site and emit a valid-looking smaller number, letting
+    # corrupt input pass the downstream finite-data validation as SAFE.
+    s = df.groupby(date_col)[value_col].agg(
+        lambda g: g.sum() if g.notna().all() else np.nan
+    ).sort_index()
     return pd.DataFrame({"ds": pd.to_datetime(s.index), "y": s.to_numpy(dtype=float)}).reset_index(drop=True)
 
 

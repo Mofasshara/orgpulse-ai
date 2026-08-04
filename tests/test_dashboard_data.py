@@ -117,6 +117,56 @@ def test_verify_audit_fails_closed_on_missing_empty_malformed(tmp_path: Path):
     assert ok is False
 
 
+def test_verify_run_does_not_crash_on_wrong_shaped_but_hash_consistent_logs(tmp_path: Path):
+    """#6: semantically malformed but internally hash-consistent inputs previously crashed
+    verify_run (list payload -> TypeError; findings=[] -> AttributeError). Must return False."""
+    runs = _seed_two_runs(tmp_path)
+    latest = runs / "latest"
+    # findings.json replaced with a JSON list (valid JSON, wrong shape)
+    (latest / "findings.json").write_text("[]")
+    ok, _ = data.verify_run(latest)                    # must not raise
+    assert ok is False
+    # a brand-new dir whose genesis payload is a list, not a dict
+    d = tmp_path / "weird"; d.mkdir()
+    (d / "findings.json").write_text("{}")
+    from orgpulse.governance.audit import HashChainedAuditLog
+    HashChainedAuditLog(d / "audit.jsonl").append("run", {"not": "expected"}, trace_id="x")
+    # hand-craft a payload that is a list to hit the shape guard
+    import json as _json
+    line = _json.loads((d / "audit.jsonl").read_text())
+    line["payload"] = ["input_hash"]
+    (d / "audit.jsonl").write_text(_json.dumps(line) + "\n")
+    ok2, _ = data.verify_run(d)                        # must not raise
+    assert ok2 is False
+
+
+def test_verify_run_catches_forged_report(tmp_path: Path):
+    """#8: report.md is a human-consumed artifact and is now audit-bound — forging it fails."""
+    runs = _seed_two_runs(tmp_path)
+    latest = runs / "latest"
+    (latest / "report.md").write_text("FORGED SAFE REPORT")
+    ok, reason = data.verify_run(latest)
+    assert ok is False and "report.md" in reason
+
+
+def test_load_history_marks_forged_and_malformed_runs_unverified(tmp_path: Path):
+    """#5: historical runs are verified; a forged one shows UNVERIFIED (not its forged severity),
+    and a malformed one never crashes the strip."""
+    runs = _seed_two_runs(tmp_path)
+    run_dirs = sorted(p for p in runs.iterdir() if p.is_dir() and p.name != "latest")
+    # forge one historical findings.json (leave its audit intact)
+    fj = json.loads((run_dirs[0] / "findings.json").read_text()); fj["overall_severity"] = "SAFE"
+    (run_dirs[0] / "findings.json").write_text(json.dumps(fj))
+    # corrupt another's findings.json entirely
+    (run_dirs[1] / "findings.json").write_text("{bad json")
+
+    hist = data.load_history(runs)                     # must not raise
+    by_dir = {r["run_dir"]: r for r in hist}
+    assert by_dir[str(run_dirs[0])]["verified"] is False
+    assert by_dir[str(run_dirs[0])]["overall_severity"] == "UNVERIFIED"  # forged status NOT shown
+    assert by_dir[str(run_dirs[1])]["verified"] is False
+
+
 def test_load_history_newest_first(tmp_path: Path):
     runs = _seed_two_runs(tmp_path)
     hist = data.load_history(runs)

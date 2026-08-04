@@ -97,6 +97,7 @@ def verify_run(run_dir: str | Path) -> tuple[bool, str]:
     """
     run_dir = Path(run_dir)
     findings_path = run_dir / "findings.json"
+    report_path = run_dir / "report.md"
     audit_path = run_dir / "audit.jsonl"
 
     if not findings_path.exists():
@@ -109,28 +110,46 @@ def verify_run(run_dir: str | Path) -> tuple[bool, str]:
         return False, "audit log unreadable"
     if not entries:
         return False, "audit log is empty"
+
+    # Validate the genesis run entry's SHAPE before indexing into it — a semantically
+    # malformed but hash-consistent log (payload a list, etc.) must fail closed, not crash.
     genesis = entries[0]
-    if genesis.get("kind") != "run" or "input_hash" not in genesis.get("payload", {}):
-        return False, "no genesis run entry with an input hash"
+    if not isinstance(genesis, dict) or genesis.get("kind") != "run":
+        return False, "no genesis run entry"
+    payload = genesis.get("payload")
+    if not isinstance(payload, dict):
+        return False, "malformed genesis payload"
+    findings_hash = payload.get("findings_hash")
+    if not isinstance(findings_hash, str):
+        return False, "genesis run entry has no findings hash"
 
-    actual = _sha256(findings_path.read_text())
-    if actual != genesis["payload"]["input_hash"]:
-        return False, "findings.json does not match the audited input hash (tampered)"
+    findings_text = findings_path.read_text()
+    if _sha256(findings_text) != findings_hash:
+        return False, "findings.json does not match the audited findings hash (tampered)"
 
-    # Bind the recommendation COUNT so tail-truncation is caught: a forward hash chain can't
-    # detect deleted trailing entries on its own, but findings.json declares how many
-    # recommendations were logged, and each must have its own audit record.
+    # report.md is a human-consumed artifact, so it is bound too (forging it must be caught).
+    report_hash = payload.get("report_hash")
+    if isinstance(report_hash, str):
+        if not report_path.exists() or _sha256(report_path.read_text()) != report_hash:
+            return False, "report.md does not match the audited report hash (tampered)"
+
+    # Validate findings shape before indexing, then bind the recommendation COUNT so
+    # tail-truncation is caught (a forward hash chain can't detect deleted trailing entries).
     try:
-        n_expected = len(json.loads(findings_path.read_text()).get("recommendations", []))
-    except (json.JSONDecodeError, OSError):
-        return False, "findings.json unreadable"
+        fj = json.loads(findings_text)
+    except json.JSONDecodeError:
+        return False, "findings.json is not valid JSON"
+    if not isinstance(fj, dict):
+        return False, "findings.json has an unexpected shape"
+    recs = fj.get("recommendations")
+    n_expected = len(recs) if isinstance(recs, list) else 0
     n_logged = sum(1 for e in entries if isinstance(e, dict) and e.get("kind") == "recommendation")
     if n_logged != n_expected:
         return False, (
             f"audit records {n_logged} recommendation(s) but findings declares {n_expected} "
             "(entries truncated or added)"
         )
-    return True, "chain verified and bound to findings.json"
+    return True, "chain verified and bound to findings.json + report.md"
 
 
 def load_history(runs_root: str | Path) -> list[dict]:
@@ -143,20 +162,30 @@ def load_history(runs_root: str | Path) -> list[dict]:
     if not root.exists():
         return []
     rows: list[dict] = []
-    for child in root.iterdir():
+    for child in sorted(root.iterdir()):
         if not child.is_dir() or child.name == "latest":
             continue
-        findings = child / "findings.json"
-        if not findings.exists():
+        if not (child / "findings.json").exists():
             continue
-        d = json.loads(findings.read_text())
+        # Every historical run is verified and bound to its audit trail before it is trusted.
+        # An unverified/forged/malformed run is surfaced as UNVERIFIED — its (untrusted)
+        # severity is NOT shown as ordinary history, and one bad run never crashes the strip.
+        ok, _reason = verify_run(child)
+        try:
+            d = json.loads((child / "findings.json").read_text())
+            if not isinstance(d, dict):
+                raise ValueError("findings.json is not an object")
+        except (json.JSONDecodeError, OSError, ValueError):
+            ok, d = False, {}
         rows.append(
             {
                 "run_id": d.get("run_id", child.name),
                 "generated_at": d.get("generated_at", child.name),
-                # Fail-safe: a missing/blank severity is a data-quality problem, not "Safe".
-                "overall_severity": d.get("overall_severity") or "DATA_QUALITY",
-                "alert": bool(d.get("alert", False)),
+                "verified": bool(ok),
+                # Only a verified run may show its severity; otherwise it reads UNVERIFIED
+                # (never a forged "Safe"). Missing/blank severity is DATA_QUALITY, not Safe.
+                "overall_severity": (d.get("overall_severity") or "DATA_QUALITY") if ok else "UNVERIFIED",
+                "alert": bool(d.get("alert", False)) if ok else True,
                 "run_dir": str(child),
             }
         )
