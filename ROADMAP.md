@@ -10,14 +10,14 @@
 
 | Status       | Count |
 |--------------|-------|
-| ✅ Done       | 32    |
+| ✅ Done       | 36    |
 | 🔄 In Progress | 0   |
-| ⏳ Pending    | 12    |
+| ⏳ Pending    | 8     |
 | 🚫 Blocked    | 0     |
 
 **Total estimated time:** 86h (~10.8d)
-**Elapsed time:** 57h (Phases 1–5 complete)
-**Remaining estimate:** 29h (~3.6d)
+**Elapsed time:** 67h (Phases 1–6 complete)
+**Remaining estimate:** 19h (~2.4d)
 
 ---
 
@@ -137,17 +137,18 @@
 | 2 | Wire audit log into orgpulse run (each rec reconstructable) | ✅ Done | 2h | 2026-08-04 13:15 | 2026-08-04 13:18 | trace_id + input hash + model |
 | 3 | EU AI Act self-classification (machine-readable + doc) | ✅ Done | 2h | 2026-08-04 13:18 | 2026-08-04 13:22 | Annex III; Arts 9/11/12/13/14. review_status/disclaimer gating from Plan 4 |
 
-### Phase 6 — Hermes Integration (P6)  ⏳
+### Phase 6 — Hermes Integration (P6)  ✅
 
 **Goal:** Hermes runs the autonomous loop on cron, remembers baselines across runs, writes artifacts.
 **Phase estimate:** 10h
+**Plan:** `docs/superpowers/plans/2026-08-04-orgpulse-p6-hermes.md`
 
 | # | Task | Status | Estimate | Started | Completed | Notes |
 |---|------|--------|----------|---------|-----------|-------|
-| 1 | Author 3× domain `SKILL.md` (clinical/QC/supply) | ⏳ Pending | 3h | — | — | |
-| 2 | Cron wiring (default daily 07:00) | ⏳ Pending | 2h | — | — | |
-| 3 | Baseline memory across runs | ⏳ Pending | 3h | — | — | |
-| 4 | Artifact writing (`/runs/<ts>`, `/runs/latest`) + alert | ⏳ Pending | 2h | — | — | |
+| 1 | Baseline memory across runs (BaselineMemory) | ✅ Done | 3h | 2026-08-04 13:25 | 2026-08-04 13:28 | JSON per-KPI baseline, cross-run state |
+| 2 | Memory-backed tick + artifact writing (`runs/<ts>`, `runs/latest`) + alert | ✅ Done | 3h | 2026-08-04 13:28 | 2026-08-04 13:32 | Detects current vs remembered baseline; `orgpulse tick` CLI |
+| 3 | 3× domain `SKILL.md` (clinical/QC/supply) + cron runbook (daily 07:00) | ✅ Done | 3h | 2026-08-04 13:32 | 2026-08-04 13:36 | Authentic Hermes frontmatter; split-plane |
+| 4 | (folded into 2) end-to-end verified: bootstrap→remembered, audit verifies | ✅ Done | 1h | 2026-08-04 13:36 | 2026-08-04 13:38 | |
 
 ### Phase 7 — Streamlit Dashboard & Seeding (P7)  ⏳
 
