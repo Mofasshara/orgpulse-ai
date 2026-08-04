@@ -22,7 +22,7 @@ orgpulse = "orgpulse.cli:app"
 [project.optional-dependencies]
 dashboard = [
     "plotly>=5.20",
-    "streamlit>=1.38",
+    "streamlit>=1.50",
 ]
 
 [build-system]
