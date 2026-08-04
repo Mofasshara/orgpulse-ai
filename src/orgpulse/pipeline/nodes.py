@@ -68,22 +68,21 @@ def detect_node(state: PipelineState) -> DetectNodeOutput:
         series_by_kpi.append(("lead_time_days", state["supply"]["lead_time_days"].to_numpy()))
 
     findings: list[KpiFinding] = []
-    max_severity = Severity.DATA_QUALITY
-    have_finding = False
     for kpi, series in series_by_kpi:
         finding = _kpi_finding(kpi, series)
-        if finding is None:
-            continue
-        findings.append(finding)
-        sev = Severity[finding.severity]
-        if not have_finding or sev > max_severity:
-            max_severity = sev
-            have_finding = True
+        if finding is not None:
+            findings.append(finding)
 
-    return {
-        "kpi_findings": findings,
-        "overall_severity": max_severity.name,
-    }
+    # DATA_QUALITY dominates (mirrors detect.orchestrator.overall_severity): if any KPI
+    # could not be assessed — or nothing was analyzable at all — the run is DATA_QUALITY,
+    # not a lower severity. Otherwise take the max of SAFE/WARNING/CRITICAL. (A bare
+    # numeric max is wrong here because Severity.DATA_QUALITY = -1, the lowest value.)
+    if not findings or any(f.severity == "DATA_QUALITY" for f in findings):
+        overall = Severity.DATA_QUALITY
+    else:
+        overall = max(Severity[f.severity] for f in findings)
+
+    return {"kpi_findings": findings, "overall_severity": overall.name}
 
 
 def forecast_node(state: PipelineState) -> ForecastNodeOutput:
@@ -170,9 +169,14 @@ def recommendation_node(state: PipelineState, llm: LLMClient) -> dict:
     anomaly_kpis = [f.kpi for f in findings if f.severity in ("WARNING", "CRITICAL")]
     dq_kpis = [f.kpi for f in findings if f.severity == "DATA_QUALITY"]
 
-    # Hero fallback: only when nothing at all is flagged
+    # Hero fallback when nothing is flagged: if the run is DATA_QUALITY (nothing was
+    # analyzable), treat the hero as a data-quality case (not a process CAPA); otherwise
+    # it is a genuinely calm run and the hero gets a routine CAPA-style review rec.
     if not anomaly_kpis and not dq_kpis:
-        anomaly_kpis = ["daily_enrollment"]
+        if overall_severity == "DATA_QUALITY":
+            dq_kpis = ["daily_enrollment"]
+        else:
+            anomaly_kpis = ["daily_enrollment"]
 
     recommendations = []
 
