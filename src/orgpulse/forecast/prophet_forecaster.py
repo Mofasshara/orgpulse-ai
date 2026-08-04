@@ -22,7 +22,10 @@ def _silence_prophet_logs() -> None:
 
 
 def series_from_generator(df: pd.DataFrame, date_col: str, value_col: str) -> pd.DataFrame:
-    s = df.groupby(date_col)[value_col].sum().sort_index()
+    # min_count=1 so a date whose values are ALL NaN aggregates to NaN, not 0.0. Otherwise
+    # an all-NaN (corrupt) enrollment stream would silently become a valid-looking 0 and pass
+    # as SAFE — the downstream finite-data validation must be able to see the NaN.
+    s = df.groupby(date_col)[value_col].sum(min_count=1).sort_index()
     return pd.DataFrame({"ds": pd.to_datetime(s.index), "y": s.to_numpy(dtype=float)}).reset_index(drop=True)
 
 

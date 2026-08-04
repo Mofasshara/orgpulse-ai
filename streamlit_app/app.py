@@ -82,6 +82,19 @@ top[1].metric("Run", findings.get("run_id", "—").split("-")[1] if "-" in findi
 top[2].metric("Generated", findings.get("generated_at", "—")[:10])
 top[3].metric("Audit chain", "verified ✅" if audit_ok else "TAMPER ❌")
 
+# Fail closed: if the run can't be verified and bound to its audit trail, the findings are
+# UNTRUSTED — never render them as a valid operational status (especially not a green all-clear).
+if not audit_ok:
+    st.error(
+        f"⛔ **This run is UNVERIFIED and must not be trusted** — {audit_reason}. "
+        "The displayed artifacts do not match their tamper-evident audit trail; operational "
+        "status is withheld. Re-generate the run on the compute plane.",
+        icon="⛔",
+    )
+    with st.expander("Show unverified raw findings (not an operational status)"):
+        st.json(findings)
+    st.stop()
+
 if findings.get("alert"):
     st.error(f"🚨 Alert raised — overall severity **{label}**. Human review required before any action.", icon="🚨")
 elif overall == "SAFE":

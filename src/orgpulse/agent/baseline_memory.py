@@ -20,11 +20,21 @@ class BaselineMemory:
     def load(self) -> dict[str, Baseline]:
         if not self.path.exists():
             return {}
-        raw = json.loads(self.path.read_text())
-        return {
-            kpi: Baseline(mean=float(v["mean"]), std=float(v["std"]), n=int(v["n"]))
-            for kpi, v in raw.items()
-        }
+        # Fail closed with a clear diagnosis on a corrupt/unreadable memory file, rather than
+        # letting a raw JSONDecodeError/KeyError surface mid-way through the autonomous tick.
+        try:
+            raw = json.loads(self.path.read_text())
+            if not isinstance(raw, dict):
+                raise ValueError("expected a JSON object of per-KPI baselines")
+            return {
+                kpi: Baseline(mean=float(v["mean"]), std=float(v["std"]), n=int(v["n"]))
+                for kpi, v in raw.items()
+            }
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"baseline memory at {self.path} is corrupt or unreadable ({exc}); "
+                "delete it to re-bootstrap, or restore a valid copy"
+            ) from exc
 
     def save(self, baselines: dict[str, Baseline]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

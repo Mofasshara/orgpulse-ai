@@ -87,17 +87,32 @@ def test_verify_run_detects_forged_findings_with_intact_chain(tmp_path: Path):
     assert ok is False and "match" in reason                   # ...but binding catches it
 
 
+def test_verify_run_detects_recommendation_tail_truncation(tmp_path: Path):
+    """A forward hash chain can't detect deleted trailing entries on its own. verify_run binds
+    the recommendation count from findings.json, so truncating rec records must fail."""
+    runs = _seed_two_runs(tmp_path)
+    latest = runs / "latest"
+    lines = (latest / "audit.jsonl").read_text().splitlines()
+    (latest / "audit.jsonl").write_text(lines[0] + "\n")       # keep only the genesis run entry
+    assert data.verify_audit(latest / "audit.jsonl") is True   # chain still internally consistent
+    ok, reason = data.verify_run(latest)
+    assert ok is False and "recommendation" in reason
+
+
 def test_verify_audit_fails_closed_on_missing_empty_malformed(tmp_path: Path):
-    missing = tmp_path / "nope.jsonl"
-    assert data.verify_audit(missing) is True or data.verify_audit(missing) is False  # no crash
+    from orgpulse.governance.audit import HashChainedAuditLog
+
     empty = tmp_path / "empty.jsonl"
     empty.write_text("")
     assert data.verify_audit(empty) is True                    # vacuously (no entries)
-    malformed = tmp_path / "bad.jsonl"
-    malformed.write_text("{not json\n")
-    assert data.verify_audit(malformed) is False               # fails closed, no raise
+    for bad in ("{not json\n", "[]\n", "123\n", '{"seq": 0}\n'):
+        p = tmp_path / "bad.jsonl"
+        p.write_text(bad)
+        assert data.verify_audit(p) is False, bad              # dashboard verifier: no raise
+        assert HashChainedAuditLog(p).verify() is False, bad   # core verifier: no raise either
     # verify_run on a dir with malformed audit also fails closed
     (tmp_path / "findings.json").write_text("{}")
+    (tmp_path / "audit.jsonl").write_text("[]\n")
     ok, _ = data.verify_run(tmp_path)
     assert ok is False
 

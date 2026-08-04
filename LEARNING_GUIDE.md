@@ -18,13 +18,16 @@
 Most business dashboards are **passive**: they show you what already happened and
 wait for a human to notice a problem. OrgPulse is the opposite — a **standing
 agent** for a pharmaceutical operations team. On a schedule (say, 7am daily) it
-wakes up on its own, pulls the latest numbers from three parts of the business
-(clinical trials, the QC lab, and the supply chain), works out what looks wrong
-today, predicts where each metric is heading over the next 30/60/90 days, and
-writes a plain-English recommendation phrased the way a pharma quality team
-expects — all before anyone has opened their laptop. Because pharma is heavily
-regulated, every recommendation is logged in a tamper-proof trail and marked
-"needs a human to sign off" — the AI advises, it never decides.
+wakes up on its own, generates the latest (synthetic) numbers for three parts of
+the business (clinical trials, the QC lab, and the supply chain), works out what
+looks wrong today, predicts where the hero metric (clinical enrollment) is heading
+over the next 30/60/90 days, and writes a plain-English recommendation phrased the
+way a pharma quality team expects — all before anyone has opened their laptop.
+Because pharma is heavily regulated, every recommendation is logged in a
+**tamper-evident** trail (under the threat model in the case study — it catches
+corruption and naïve edits, not a fully re-signed forgery) and marked "needs a
+human to sign off" — the AI advises, it never decides. (This prototype uses
+realistic *synthetic* data, not a live business feed.)
 
 In one line: *it's the architecture of Palantir AIP — ingest → detect → forecast
 → recommend — but open-source, self-hosted, and built to the EU AI Act
@@ -64,7 +67,7 @@ high-risk + GxP bar.*
                           ┌──────────────────────────────────────┐
                           │ STREAMLIT dashboard (the shop window) │
                           │ reads runs/latest, renders it,        │
-                          │ deployed to Streamlit Cloud           │
+                          │ deploy-ready (not yet deployed)       │
                           └──────────────────────────────────────┘
 ```
 
@@ -380,10 +383,11 @@ free to host, interactive enough."
 
 **60-second version (corridor / first meeting)**
 "OrgPulse is an autonomous operations analyst for pharma. Instead of a dashboard
-you have to check, an AI agent wakes up on a schedule, pulls data from clinical
+you have to check, an AI agent wakes up on a schedule, ingests data from clinical
 trials, the QC lab, and the supply chain, spots what's abnormal, forecasts the
-next 30/60/90 days, and writes a recommendation in the language a quality team
-uses — and because it's pharma, every recommendation is logged tamper-proof and
+hero KPI over the next 30/60/90 days, and writes a recommendation in the language a
+quality team uses — and because it's pharma, every recommendation is logged
+tamper-evidently and
 needs human sign-off. It's Palantir AIP's shape, but open-source and built to the
 EU AI Act bar."
 

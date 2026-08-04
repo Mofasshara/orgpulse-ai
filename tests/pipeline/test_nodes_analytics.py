@@ -83,3 +83,43 @@ def test_detect_node_data_quality_dominates_and_alerts():
         OfflineLLM(),
     )
     assert rec["alert"] is True
+
+
+def test_all_nan_clinical_is_data_quality_not_safe_zero():
+    """Fail-open regression: an all-NaN enrollment stream previously aggregated to 0.0 and
+    passed as SAFE. It must now surface DATA_QUALITY (never SAFE) with no numeric forecast."""
+    import numpy as np
+    import pandas as pd
+
+    clinical = pd.DataFrame({
+        "date": pd.date_range("2026-01-01", periods=200),
+        "daily_enrollment": np.nan,
+    })
+    state = {"clinical": clinical, "qc": _state(200)["qc"], "supply": _state(200)["supply"]}
+
+    det = detect_node(state)
+    hero = next(f for f in det["kpi_findings"] if f.kpi == "daily_enrollment")
+    assert hero.severity == "DATA_QUALITY" and hero.latest_value is None
+    assert det["overall_severity"] == "DATA_QUALITY"
+    # no numeric forecast published for an unusable hero series
+    assert forecast_node(state)["forecast"].get("daily_enrollment") is None
+
+
+def test_detect_node_survives_malformed_inputs_as_data_quality():
+    """Schema-corrupt / 2-D KPI inputs must become DATA_QUALITY findings, not crash."""
+    import numpy as np
+    import pandas as pd
+
+    good = _state(200)
+    # QC column of 2-element arrays (ragged/2-D) + a supply frame missing its column
+    bad_qc = pd.DataFrame({
+        "pass_rate": list(np.ones((200, 2))),
+        "calibration_offset": np.ones(200),
+    })
+    state = {"clinical": good["clinical"], "qc": bad_qc, "supply": pd.DataFrame({"wrong_col": np.ones(200)})}
+
+    det = detect_node(state)                       # must not raise
+    sev = {f.kpi: f.severity for f in det["kpi_findings"]}
+    assert sev["pass_rate"] == "DATA_QUALITY"      # 2-D column
+    assert sev["lead_time_days"] == "DATA_QUALITY" # missing column
+    assert det["overall_severity"] == "DATA_QUALITY"

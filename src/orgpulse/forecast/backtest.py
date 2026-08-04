@@ -10,6 +10,14 @@ from orgpulse.forecast.types import BacktestResult
 def rolling_origin_backtest(
     series: pd.DataFrame, horizon: int = 30, n_folds: int = 4, min_train: int = 150, interval_width: float = 0.9
 ) -> BacktestResult:
+    if horizon < 1:
+        raise ValueError(f"horizon must be >= 1, got {horizon}")
+    if n_folds < 1:
+        raise ValueError(f"n_folds must be >= 1, got {n_folds}")
+    if min_train < 1:
+        raise ValueError(f"min_train must be >= 1, got {min_train}")
+    if not 0.0 < interval_width < 1.0:
+        raise ValueError(f"interval_width must be in (0, 1), got {interval_width}")
     n = len(series)
     last_cutoff = n - horizon
     if last_cutoff <= min_train:

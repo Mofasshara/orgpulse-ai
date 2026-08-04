@@ -70,6 +70,8 @@ def verify_audit(audit_path: str | Path) -> bool:
         return False
     prev_hash = _GENESIS
     for i, e in enumerate(entries):
+        if not isinstance(e, dict):        # e.g. a bare JSON list/scalar line
+            return False
         try:
             if e.get("seq") != i or e.get("prev_hash") != prev_hash:
                 return False
@@ -79,7 +81,7 @@ def verify_audit(audit_path: str | Path) -> bool:
             if expected != e.get("entry_hash"):
                 return False
             prev_hash = e["entry_hash"]
-        except (KeyError, TypeError):
+        except (KeyError, TypeError, AttributeError):
             return False
     return True
 
@@ -114,6 +116,20 @@ def verify_run(run_dir: str | Path) -> tuple[bool, str]:
     actual = _sha256(findings_path.read_text())
     if actual != genesis["payload"]["input_hash"]:
         return False, "findings.json does not match the audited input hash (tampered)"
+
+    # Bind the recommendation COUNT so tail-truncation is caught: a forward hash chain can't
+    # detect deleted trailing entries on its own, but findings.json declares how many
+    # recommendations were logged, and each must have its own audit record.
+    try:
+        n_expected = len(json.loads(findings_path.read_text()).get("recommendations", []))
+    except (json.JSONDecodeError, OSError):
+        return False, "findings.json unreadable"
+    n_logged = sum(1 for e in entries if isinstance(e, dict) and e.get("kind") == "recommendation")
+    if n_logged != n_expected:
+        return False, (
+            f"audit records {n_logged} recommendation(s) but findings declares {n_expected} "
+            "(entries truncated or added)"
+        )
     return True, "chain verified and bound to findings.json"
 
 

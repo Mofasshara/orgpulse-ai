@@ -116,11 +116,13 @@ current pipeline.
 
 - **Art. 12 logging** → every run and recommendation is appended to a **hash-chained**
   `audit.jsonl`, and each run entry records the SHA-256 `input_hash` of the exact
-  `findings.json` it attests to. The dashboard's `verify_run` checks both the chain *and*
-  that the displayed `findings.json` still hashes to that `input_hash` — so editing the
-  findings alone (leaving the chain intact) is caught. The standalone verifier is proven
-  equivalent to the compute-plane implementation in tests, and fails closed on
-  missing/empty/malformed logs.
+  `findings.json` it attests to. The dashboard's `verify_run` checks the chain, that the
+  displayed `findings.json` still hashes to that `input_hash` (so editing the findings alone is
+  caught), AND that the number of logged recommendation entries matches the count in
+  `findings.json` (so deleting trailing recommendation records — which a forward hash chain
+  can't detect on its own — is caught too). Both verifiers (dashboard and compute-plane) fail
+  closed on malformed logs, and `verify_run` fails closed on missing/empty logs; a proven-
+  equivalence test guards against drift between the two implementations.
 
   **Threat model (stated honestly):** an *unkeyed* hash chain stored in the same writable
   file detects **accidental corruption and naïve tampering** (editing a past entry, or the

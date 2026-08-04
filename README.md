@@ -18,7 +18,7 @@ itself *and* is safe to run where regulators are watching.
 
 ## See it
 
-- **Live dashboard:** _<add your Streamlit Cloud URL here>_
+- **Live dashboard:** _not yet deployed — deploy-ready; add your Streamlit Cloud URL here_
 - **Case study (the story + honest results):** [docs/CASE_STUDY.md](docs/CASE_STUDY.md)
 - **Architecture + diagram:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - **EU AI Act self-classification:** [docs/EU_AI_ACT_SELF_CLASSIFICATION.md](docs/EU_AI_ACT_SELF_CLASSIFICATION.md)
@@ -76,8 +76,10 @@ This project optimizes for **trustworthiness over leaderboard numbers**, and say
   (~70% measured coverage); a calibration factor is **applied** to widen the published interval
   toward the nominal 90%. That calibration is fit **in-sample**, so out-of-sample coverage is
   not claimed (a production system would use split-conformal) — and the README says so.
-- CUSUM thresholds are **calibrated to a documented ~1% in-control false-alarm rate per window
-  length** (Monte-Carlo table), and enforce a ≥60-sample baseline floor — validated with
+- CUSUM thresholds are **calibrated (Monte-Carlo table) to a ~1% in-control false-alarm rate per
+  recent-window length at the reference 60-sample baseline** (the enforced minimum; longer
+  baselines are *more* conservative, i.e. well below 1%), for the fixed slack `k=0.5` (other `k`
+  values are rejected as uncalibrated) — validated with
   mutation-style and multi-seed tests, not just favorable margins.
 
 ## Why it exists

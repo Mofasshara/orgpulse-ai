@@ -79,6 +79,10 @@ def write_run(out: Path, days: int, seed: int, offline: bool):
     # every AI-generated recommendation (trace_id, timestamp, model, input hash).
     model = "offline-stub" if offline else "claude-sonnet-5"
     input_hash = hashlib.sha256(findings_json.encode("utf-8")).hexdigest()
+    # The output dir represents exactly THIS run: clear any prior audit log so re-running into
+    # the same (default runs/latest) dir doesn't append to a stale chain that would no longer
+    # bind to the freshly-overwritten findings.json (breaking verify_run).
+    (out / "audit.jsonl").unlink(missing_ok=True)
     audit = HashChainedAuditLog(out / "audit.jsonl")
     audit.append(
         "run",

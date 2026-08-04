@@ -64,6 +64,25 @@ def test_run_tick_rejects_unsafe_params_instead_of_degrading(tmp_path, kwargs):
         run_tick(mem, 1, out_root=tmp_path / "runs", now="2026-08-04T07:00:00", offline=True, **kwargs)
 
 
+def test_run_tick_rejects_non_integer_params(tmp_path):
+    """The public Python API must honor its 'params validated at entry' claim (Typer guards
+    the CLI, but direct callers can pass a float)."""
+    mem = BaselineMemory(tmp_path / "m.json")
+    with pytest.raises(TypeError):
+        run_tick(mem, 0, baseline_days=60.5, out_root=tmp_path / "runs", now="2026-08-04T07:00:00", offline=True)
+
+
+def test_corrupt_baseline_memory_fails_clearly(tmp_path):
+    """A corrupt memory file must raise a clear diagnosis, not a raw JSONDecodeError mid-tick."""
+    p = tmp_path / "m.json"
+    p.write_text("{bad")
+    mem = BaselineMemory(p)
+    with pytest.raises(ValueError, match="corrupt or unreadable"):
+        mem.load()
+    with pytest.raises(ValueError):
+        run_tick(mem, 0, out_root=tmp_path / "runs", now="2026-08-04T07:00:00", offline=True)
+
+
 def test_run_tick_refuses_to_overwrite_a_durable_run(tmp_path):
     """Two ticks pinned to the same wall-clock second must not collide onto one dir and
     destroy the first run's durable record."""

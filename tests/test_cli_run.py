@@ -20,6 +20,17 @@ def test_cli_run_offline(tmp_path: Path):
     assert (tmp_path / "findings.json").exists() and (tmp_path / "report.md").exists()
 
 
+def test_write_run_twice_into_same_dir_stays_bound(tmp_path: Path):
+    """Re-running into the same output dir must leave findings.json bound to its audit trail
+    (audit was previously appended while findings was overwritten, breaking verify_run)."""
+    from streamlit_app import data
+
+    write_run(out=tmp_path, days=200, seed=1, offline=True)
+    write_run(out=tmp_path, days=200, seed=2, offline=True)   # same dir, different data
+    ok, reason = data.verify_run(tmp_path)
+    assert ok is True, reason
+
+
 def test_write_run_produces_verifying_audit_log(tmp_path: Path):
     from orgpulse.governance.audit import HashChainedAuditLog
 

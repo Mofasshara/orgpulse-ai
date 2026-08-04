@@ -89,6 +89,12 @@ def cusum_detect(
         return _dq("insufficient baseline (<60)")
     if not finite_nonneg(k):
         return _dq("invalid k")
+    # The severity thresholds are Monte-Carlo-calibrated ONLY for the reference slack k=0.5.
+    # Any other k would be scored against thresholds that don't match its in-control
+    # distribution (false-alarm control breaks — e.g. k=0 → ~88% CRITICAL). Reject it rather
+    # than report a miscalibrated severity.
+    if abs(k - 0.5) > 1e-9:
+        return _dq("uncalibrated k (CUSUM thresholds are calibrated only for k=0.5)")
 
     z = (arr - baseline.mean) / baseline.std
     warn, crit = calibrated_thresholds(len(arr))
