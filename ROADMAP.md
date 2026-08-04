@@ -10,14 +10,14 @@
 
 | Status       | Count |
 |--------------|-------|
-| ✅ Done       | 23    |
+| ✅ Done       | 29    |
 | 🔄 In Progress | 0   |
-| ⏳ Pending    | 21    |
+| ⏳ Pending    | 15    |
 | 🚫 Blocked    | 0     |
 
 **Total estimated time:** 86h (~10.8d)
-**Elapsed time:** 37h (Phases 1–3 complete)
-**Remaining estimate:** 49h (~6.1d)
+**Elapsed time:** 50h (Phases 1–4 complete)
+**Remaining estimate:** 36h (~4.5d)
 
 ---
 
@@ -110,19 +110,20 @@
 | 2 | Rolling-origin backtest harness (MAPE/MASE) | ✅ Done | 3h | 2026-08-03 08:00 | 2026-08-03 08:12 | Honest: MAPE ~17%, MASE ~1.4 (no leakage) |
 | 3 | Interval calibration check (90% coverage) | ✅ Done | 2h | 2026-08-03 08:12 | 2026-08-04 08:25 | Detects overconfidence (0.72→0.88); in-sample disclosed |
 
-### Phase 4 — LangGraph Analysis DAG (P4)  ⏳
+### Phase 4 — LangGraph Analysis DAG (P4)  ✅
 
 **Goal:** 4-node DAG (detect → forecast → analyze → recommend) producing findings JSON + report + alert; offline mode works keyless.
 **Phase estimate:** 13h
+**Plan:** `docs/superpowers/plans/2026-08-04-orgpulse-p4-langgraph-dag.md`
 
 | # | Task | Status | Estimate | Started | Completed | Notes |
 |---|------|--------|----------|---------|-----------|-------|
-| 1 | DAG scaffolding + shared state schema | ⏳ Pending | 2h | — | — | |
-| 2 | Anomaly + forecast nodes (wire P2/P3) | ⏳ Pending | 2h | — | — | |
-| 3 | Domain Analyst LLM node | ⏳ Pending | 2h | — | — | |
-| 4 | Recommendation Writer node (CAPA/ICH E6(R3)) | ⏳ Pending | 3h | — | — | |
-| 5 | Offline deterministic stub mode | ⏳ Pending | 2h | — | — | Keyless demo path |
-| 6 | Findings JSON schema + report writer | ⏳ Pending | 2h | — | — | |
+| 1 | Pipeline state + findings schema (human-gated, JSON-safe) | ✅ Done | 2h | 2026-08-04 07:40 | 2026-08-04 07:50 | |
+| 2 | LLM client interface + OfflineLLM stub + Claude(sonnet-5) adapter | ✅ Done | 2h | 2026-08-04 07:50 | 2026-08-04 08:00 | Keyless default |
+| 3 | Detect + forecast nodes (wire P2/P3) | ✅ Done | 2h | 2026-08-04 08:00 | 2026-08-04 08:15 | Driving-detector detail; RNG localized |
+| 4 | Analyst + Recommendation LLM nodes (CAPA/ICH E6(R3)) | ✅ Done | 3h | 2026-08-04 08:15 | 2026-08-04 08:30 | DATA_QUALITY handled distinctly |
+| 5 | Assemble LangGraph DAG + findings/report/alert | ✅ Done | 2h | 2026-08-04 08:30 | 2026-08-04 08:45 | Offline-deterministic end-to-end |
+| 6 | `orgpulse run` CLI (findings.json + report.md) | ✅ Done | 2h | 2026-08-04 08:45 | 2026-08-04 13:05 | Final review fixed DATA_QUALITY dominance/alert |
 
 ### Phase 5 — Governance & Compliance (P5)  ⏳
 
