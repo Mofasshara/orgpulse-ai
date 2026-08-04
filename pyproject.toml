@@ -9,6 +9,8 @@ dependencies = [
     "typer>=0.12",
     "scikit-learn>=1.4",
     "prophet>=1.1",
+    "langgraph>=0.2",
+    "anthropic>=0.40",
 ]
 
 [dependency-groups]
