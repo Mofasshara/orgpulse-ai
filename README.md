@@ -107,7 +107,7 @@ Anthropic Claude (reasoning, optional) · Hermes (autonomy/scheduling) · Stream
 | `src/orgpulse/agent/` | Cross-run baseline memory + the autonomous `run_tick` loop |
 | `hermes/` | 3× domain `SKILL.md` + cron runbook (split-plane) |
 | `streamlit_app/` | Self-contained dashboard (reads `runs/`, no heavy deps) |
-| `runs/` | Committed demo run history (so the deployed dashboard is populated) |
+| `runs/` | Committed demo run history (so the dashboard is populated on first load once deployed) |
 | `docs/` | Architecture, case study, EU AI Act classification, specs & plans |
 
 ## Tests

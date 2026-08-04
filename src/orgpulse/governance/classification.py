@@ -36,9 +36,15 @@ SELF_CLASSIFICATION: dict = {
             "title": "Record-keeping / logging",
             "how_orgpulse_meets_it": (
                 "Every run and every AI-generated recommendation is written to a "
-                "hash-chained, tamper-evident, append-only audit log with a trace_id, "
-                "timestamp, input-data hash, and model+version, so any past decision is "
-                "fully reconstructable and tampering is detectable via chain verification."
+                "hash-chained, tamper-evident, append-only audit log. The run entry records the "
+                "input lineage (data-generation seed and parameters plus a SHA-256 hash of the "
+                "actual input data frames), output-integrity hashes of the findings and report, "
+                "the model+version, and a timestamp — so a past decision can be regenerated from "
+                "the recorded inputs and its outputs checked against the logged hashes. Tampering "
+                "with a past entry, the findings, or the report is detectable via chain and hash "
+                "verification. (Threat model: the chain is unkeyed, so it detects corruption and "
+                "naïve edits but not a full-file rewrite that re-signs the chain — keyed signing "
+                "is noted as future work.)"
             ),
         },
         {

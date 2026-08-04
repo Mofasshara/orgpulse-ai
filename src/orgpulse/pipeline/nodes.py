@@ -10,7 +10,13 @@ from orgpulse.detect.types import Severity
 from orgpulse.forecast.calibration import interval_calibration
 from orgpulse.forecast.prophet_forecaster import forecast_kpi, series_from_generator
 from orgpulse.pipeline.llm import LLMClient
-from orgpulse.pipeline.state import HUMAN_OVERSIGHT_DISCLAIMER, KpiFinding, PipelineState, Recommendation
+from orgpulse.pipeline.state import (
+    HUMAN_OVERSIGHT_DISCLAIMER,
+    KpiFinding,
+    PipelineState,
+    Recommendation,
+    data_quality_finding,
+)
 
 
 class DetectNodeOutput(TypedDict):
@@ -22,20 +28,26 @@ class ForecastNodeOutput(TypedDict):
     forecast: dict
 
 
-def _kpi_finding(kpi: str, series) -> KpiFinding | None:
+def _kpi_finding(kpi: str, series) -> KpiFinding:
     """
-    Build a KpiFinding for one KPI series.
+    Assess one KPI series and ALWAYS return a finding. This is the single fail-safe gate:
+    the default is DATA_QUALITY, and SAFE/WARNING/CRITICAL are returned only after the data
+    is affirmatively validated (1-D, numeric, >=120 points) AND detected. A short, missing,
+    ragged, or non-numeric series can never be silently omitted or read as SAFE.
 
-    - Requires >= 120 points (>=90 baseline + 30 recent); returns None if shorter.
-    - detail comes from the *driving* detector (the one whose severity == the
-      overall/max severity), not always the zscore result.
+    - detail comes from the *driving* detector (the one whose severity == the max severity).
     - latest_value is a plain Python float (NaN/inf -> None) for JSON safety.
     """
-    s = np.asarray(series, dtype=float)
+    try:
+        s = np.asarray(series, dtype=float)
+    except (ValueError, TypeError):
+        return data_quality_finding(kpi, "unusable input (non-numeric or ragged)")
+    if s.ndim != 1:
+        return data_quality_finding(kpi, f"unusable input ({s.ndim}-D, expected 1-D)")
     if len(s) < 120:  # need >=90 baseline + 30 recent
-        return None
+        return data_quality_finding(kpi, f"insufficient data ({len(s)} points < 120 required)")
     baseline, recent = s[:-30], s[-30:]
-    results = detect_kpi(baseline, recent, kpi=kpi)
+    results = detect_kpi(baseline, recent, kpi=kpi)  # returns DATA_QUALITY on non-finite data
     sev = overall_severity(results)
     driving = next((r for r in results if r.severity == sev), results[0])  # detail from the driving detector
     v = float(recent[-1])
@@ -73,12 +85,11 @@ def detect_node(state: PipelineState) -> DetectNodeOutput:
     findings: list[KpiFinding] = []
     for kpi, extract in extractors:
         try:
-            finding = _kpi_finding(kpi, extract())
+            series = extract()
         except (KeyError, ValueError, TypeError, IndexError):
-            finding = KpiFinding(kpi=kpi, severity=Severity.DATA_QUALITY.name,
-                                 detail="unusable input (missing/malformed data)", latest_value=None)
-        if finding is not None:
-            findings.append(finding)
+            findings.append(data_quality_finding(kpi, "unusable input (missing column / malformed data)"))
+            continue
+        findings.append(_kpi_finding(kpi, series))  # always returns a finding (never None)
 
     # DATA_QUALITY dominates (mirrors detect.orchestrator.overall_severity): if any KPI
     # could not be assessed — or nothing was analyzable at all — the run is DATA_QUALITY,

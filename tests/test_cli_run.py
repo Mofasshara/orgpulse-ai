@@ -45,5 +45,18 @@ def test_write_run_produces_verifying_audit_log(tmp_path: Path):
         assert len(got) == 1
         p = got[0].payload
         assert p["review_status"] == "PENDING_HUMAN_REVIEW"
-        assert "input_hash" in p and p["model"] in ("offline-stub", "claude-sonnet-5")
+        assert "findings_hash" in p and p["model"] in ("offline-stub", "claude-sonnet-5")
         assert got[0].timestamp == f.generated_at
+
+
+def test_run_audit_records_input_lineage_not_just_output_hash(tmp_path: Path):
+    """Compliance honesty (#7): the run entry must record real INPUT lineage (seed, params,
+    input-data hash) and OUTPUT integrity hashes — not an output hash mislabeled as input."""
+    from orgpulse.governance.audit import HashChainedAuditLog
+
+    write_run(out=tmp_path, days=200, seed=42, offline=True)
+    run_entry = HashChainedAuditLog(tmp_path / "audit.jsonl").entries()[0].payload
+    for key in ("findings_hash", "report_hash", "input_data_hash", "seed", "days"):
+        assert key in run_entry, key
+    assert run_entry["seed"] == 42 and run_entry["days"] == 200
+    assert "input_hash" not in run_entry  # the misleading name is gone

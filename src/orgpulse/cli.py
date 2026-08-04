@@ -72,13 +72,20 @@ def write_run(out: Path, days: int, seed: int, offline: bool):
     findings = run_pipeline(clinical, qc, supply, offline=offline)
 
     findings_json = json.dumps(findings.to_json_dict(), indent=2, allow_nan=False)
+    report_text = render_report(findings)
     (out / "findings.json").write_text(findings_json)
-    (out / "report.md").write_text(render_report(findings))
+    (out / "report.md").write_text(report_text)
 
-    # EU AI Act Article 12: hash-chained, reconstructable audit log of the run and
-    # every AI-generated recommendation (trace_id, timestamp, model, input hash).
+    # EU AI Act Article 12: hash-chained, reconstructable audit log. We record the real input
+    # LINEAGE (seed + generation params + a hash of the actual input frames), the OUTPUT
+    # integrity hashes (findings + report), and the model, so a decision is genuinely
+    # reproducible — not merely an output hash mislabeled as "input data".
     model = "offline-stub" if offline else "claude-sonnet-5"
-    input_hash = hashlib.sha256(findings_json.encode("utf-8")).hexdigest()
+    findings_hash = hashlib.sha256(findings_json.encode("utf-8")).hexdigest()
+    report_hash = hashlib.sha256(report_text.encode("utf-8")).hexdigest()
+    input_data_hash = hashlib.sha256(
+        (clinical.to_csv(index=False) + qc.to_csv(index=False) + supply.to_csv(index=False)).encode("utf-8")
+    ).hexdigest()
     # The output dir represents exactly THIS run: clear any prior audit log so re-running into
     # the same (default runs/latest) dir doesn't append to a stale chain that would no longer
     # bind to the freshly-overwritten findings.json (breaking verify_run).
@@ -89,14 +96,15 @@ def write_run(out: Path, days: int, seed: int, offline: bool):
         {
             "overall_severity": findings.overall_severity, "alert": findings.alert,
             "generated_at": findings.generated_at, "model": model, "offline": offline,
-            "input_hash": input_hash,
+            "findings_hash": findings_hash, "report_hash": report_hash,
+            "input_data_hash": input_data_hash, "seed": seed, "days": days,
         },
         trace_id=findings.run_id, timestamp=findings.generated_at,
     )
     for i, rec in enumerate(findings.recommendations):
         audit.append(
             "recommendation",
-            {**asdict(rec), "model": model, "input_hash": input_hash},
+            {**asdict(rec), "model": model, "findings_hash": findings_hash},
             trace_id=f"{findings.run_id}:{rec.kpi}:{i}", timestamp=findings.generated_at,
         )
     return findings

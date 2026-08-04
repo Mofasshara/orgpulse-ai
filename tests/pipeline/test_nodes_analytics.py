@@ -105,6 +105,35 @@ def test_all_nan_clinical_is_data_quality_not_safe_zero():
     assert forecast_node(state)["forecast"].get("daily_enrollment") is None
 
 
+def test_partial_nan_clinical_is_data_quality_not_masked_sum():
+    """Fail-open regression (#1): one missing SITE on one date previously left a valid-looking
+    partial sum that passed SAFE. Any NaN in a date's rows must make that day's total NaN."""
+    import numpy as np
+    from datetime import date
+    from orgpulse.generators.clinical import generate_clinical
+
+    clinical = generate_clinical(date(2026, 1, 1), 200, make_rng(42))
+    d0 = clinical["date"].iloc[0]
+    clinical.loc[(clinical.date == d0) & (clinical.site_id == 0), "daily_enrollment"] = np.nan
+    state = {"clinical": clinical, "qc": _state(200)["qc"], "supply": _state(200)["supply"]}
+
+    hero = next(f for f in detect_node(state)["kpi_findings"] if f.kpi == "daily_enrollment")
+    assert hero.severity == "DATA_QUALITY"
+    assert forecast_node(state)["forecast"].get("daily_enrollment") is None
+
+
+def test_insufficient_kpi_is_data_quality_not_silently_omitted():
+    """Fail-open regression (#2): a KPI with <120 points was returned as None and dropped, so
+    an insufficient stream left overall SAFE. It must now be a DATA_QUALITY finding that dominates."""
+    good = _state(200)
+    state = {"clinical": good["clinical"], "qc": good["qc"], "supply": good["supply"].iloc[:119]}
+    det = detect_node(state)
+    sev = {f.kpi: f.severity for f in det["kpi_findings"]}
+    assert sev.get("lead_time_days") == "DATA_QUALITY"     # present, not omitted
+    assert set(sev) == {"daily_enrollment", "pass_rate", "calibration_offset", "lead_time_days"}
+    assert det["overall_severity"] == "DATA_QUALITY"
+
+
 def test_detect_node_survives_malformed_inputs_as_data_quality():
     """Schema-corrupt / 2-D KPI inputs must become DATA_QUALITY findings, not crash."""
     import numpy as np

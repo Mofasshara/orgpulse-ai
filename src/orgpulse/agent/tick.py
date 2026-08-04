@@ -24,7 +24,7 @@ from orgpulse.governance.audit import HashChainedAuditLog
 from orgpulse.pipeline.graph import render_report
 from orgpulse.pipeline.llm import make_llm
 from orgpulse.pipeline.nodes import analyst_node, forecast_node, recommendation_node
-from orgpulse.pipeline.state import Findings, KpiFinding
+from orgpulse.pipeline.state import Findings, KpiFinding, data_quality_finding
 
 
 def _kpi_series(clinical, qc, supply) -> list[tuple[str, np.ndarray]]:
@@ -95,18 +95,25 @@ def run_tick(
 
     for kpi, series in _kpi_series(clinical, qc, supply):
         s = np.asarray(series, dtype=float)
-        if len(s) < n:
-            continue
-        current = s[-n:]
-        # Established trailing baseline (long window) becomes the NEXT tick's baseline;
-        # kept longer than the detection window so CUSUM's ≥60-sample calibration holds.
-        baseline_window = s[-baseline_days:]
-        finite_bl = baseline_window[np.isfinite(baseline_window)]
-        # Never persist a baseline below the detector minimum — a too-small baseline would
-        # make the NEXT tick degrade to DATA_QUALITY. If this window is too thin (e.g. a KPI
-        # riddled with NaNs), skip saving so that KPI simply re-bootstraps next tick.
+
+        # Established trailing baseline (long window) becomes the NEXT tick's baseline; kept
+        # longer than the detection window so CUSUM's ≥60-sample calibration holds. Saved
+        # independently of current-period validity, but never below the detector minimum.
+        baseline_window = s[-baseline_days:] if s.ndim == 1 else np.asarray([])
+        finite_bl = baseline_window[np.isfinite(baseline_window)] if baseline_window.size else baseline_window
         if finite_bl.size >= _MIN_BASELINE_N:
             new_baselines[kpi] = fit_baseline(finite_bl)
+
+        # Fail-safe assessment of the CURRENT period: unusable data is DATA_QUALITY, never
+        # omitted and never SAFE — INCLUDING on the bootstrap path (no remembered baseline).
+        # SAFE is only assigned after the current window is validated finite and sufficient.
+        if s.ndim != 1 or len(s) < n:
+            findings.append(data_quality_finding(kpi, f"insufficient/malformed current period (n={s.size})"))
+            continue
+        current = s[-n:]
+        if not np.isfinite(current).all():
+            findings.append(data_quality_finding(kpi, "non-finite values in current period"))
+            continue
 
         prior = remembered.get(kpi)
         if prior is not None:
@@ -118,7 +125,7 @@ def run_tick(
             detail = next((r for r in results if r.severity == sev), results[0]).detail
         else:
             used_bootstrap = True
-            sev = Severity.SAFE
+            sev = Severity.SAFE   # earned: current period validated finite + sufficient
             detail = "bootstrap baseline (no prior period remembered)"
 
         v = float(current[-1])
@@ -160,9 +167,16 @@ def run_tick(
             )
         out_dir.mkdir(parents=True, exist_ok=True)
         fj = json.dumps(findings_obj.to_json_dict(), indent=2, allow_nan=False)
+        report_text = render_report(findings_obj)
         (out_dir / "findings.json").write_text(fj)
-        (out_dir / "report.md").write_text(render_report(findings_obj))
-        input_hash = hashlib.sha256(fj.encode("utf-8")).hexdigest()
+        (out_dir / "report.md").write_text(report_text)
+        # Article 12 lineage: real inputs (seed + params + input-frame hash) + output integrity
+        # hashes (findings + report), so a decision is genuinely reproducible.
+        findings_hash = hashlib.sha256(fj.encode("utf-8")).hexdigest()
+        report_hash = hashlib.sha256(report_text.encode("utf-8")).hexdigest()
+        input_data_hash = hashlib.sha256(
+            (clinical.to_csv(index=False) + qc.to_csv(index=False) + supply.to_csv(index=False)).encode("utf-8")
+        ).hexdigest()
         # Each run dir holds exactly THIS run: clear any prior audit log (the reusable
         # `latest/` dir would otherwise accumulate across ticks and diverge from
         # findings.json/report.md). Durable per-run records live in the timestamped dirs.
@@ -171,13 +185,15 @@ def run_tick(
         audit.append(
             "run",
             {"overall_severity": overall.name, "alert": findings_obj.alert, "generated_at": generated_at,
-             "model": model, "offline": offline, "input_hash": input_hash,
-             "tick_number": tick_number, "used_bootstrap": used_bootstrap},
+             "model": model, "offline": offline, "findings_hash": findings_hash,
+             "report_hash": report_hash, "input_data_hash": input_data_hash,
+             "seed": seed, "base_days": base_days, "days_per_period": days_per_period,
+             "baseline_days": baseline_days, "tick_number": tick_number, "used_bootstrap": used_bootstrap},
             trace_id=run_id, timestamp=generated_at,
         )
         for i, rec in enumerate(findings_obj.recommendations):
             audit.append(
-                "recommendation", {**asdict(rec), "model": model, "input_hash": input_hash},
+                "recommendation", {**asdict(rec), "model": model, "findings_hash": findings_hash},
                 trace_id=f"{run_id}:{rec.kpi}:{i}", timestamp=generated_at,
             )
 

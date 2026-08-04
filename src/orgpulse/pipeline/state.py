@@ -19,6 +19,13 @@ class KpiFinding:
     latest_value: float | None
 
 
+def data_quality_finding(kpi: str, detail: str) -> "KpiFinding":
+    """The single fail-safe finding. Any KPI whose data cannot be affirmatively validated
+    becomes this — DATA_QUALITY, with no numeric value. SAFE is only ever produced by a
+    successful detection, never as a default/fallback for missing or bad data."""
+    return KpiFinding(kpi=kpi, severity="DATA_QUALITY", detail=detail, latest_value=None)
+
+
 @dataclass(frozen=True)
 class Recommendation:
     kpi: str
