@@ -10,14 +10,14 @@
 
 | Status       | Count |
 |--------------|-------|
-| ✅ Done       | 29    |
+| ✅ Done       | 32    |
 | 🔄 In Progress | 0   |
-| ⏳ Pending    | 15    |
+| ⏳ Pending    | 12    |
 | 🚫 Blocked    | 0     |
 
 **Total estimated time:** 86h (~10.8d)
-**Elapsed time:** 50h (Phases 1–4 complete)
-**Remaining estimate:** 36h (~4.5d)
+**Elapsed time:** 57h (Phases 1–5 complete)
+**Remaining estimate:** 29h (~3.6d)
 
 ---
 
@@ -125,16 +125,17 @@
 | 5 | Assemble LangGraph DAG + findings/report/alert | ✅ Done | 2h | 2026-08-04 08:30 | 2026-08-04 08:45 | Offline-deterministic end-to-end |
 | 6 | `orgpulse run` CLI (findings.json + report.md) | ✅ Done | 2h | 2026-08-04 08:45 | 2026-08-04 13:05 | Final review fixed DATA_QUALITY dominance/alert |
 
-### Phase 5 — Governance & Compliance (P5)  ⏳
+### Phase 5 — Governance & Compliance (P5)  ✅
 
 **Goal:** Real EU AI Act high-risk controls: hash-chained audit log, reconstructable decisions, human-oversight gating, self-classification doc.
 **Phase estimate:** 7h
+**Plan:** `docs/superpowers/plans/2026-08-04-orgpulse-p5-governance.md`
 
 | # | Task | Status | Estimate | Started | Completed | Notes |
 |---|------|--------|----------|---------|-----------|-------|
-| 1 | Hash-chained audit log + trace reconstruction | ⏳ Pending | 3h | — | — | Article 12 |
-| 2 | `review_status` + disclaimer schema enforcement | ⏳ Pending | 2h | — | — | Article 14 |
-| 3 | EU AI Act self-classification doc (Annex III, Art 11) | ⏳ Pending | 2h | — | — | |
+| 1 | Hash-chained audit log + trace reconstruction | ✅ Done | 3h | 2026-08-04 13:10 | 2026-08-04 13:15 | Article 12; tamper-evidence verified end-to-end |
+| 2 | Wire audit log into orgpulse run (each rec reconstructable) | ✅ Done | 2h | 2026-08-04 13:15 | 2026-08-04 13:18 | trace_id + input hash + model |
+| 3 | EU AI Act self-classification (machine-readable + doc) | ✅ Done | 2h | 2026-08-04 13:18 | 2026-08-04 13:22 | Annex III; Arts 9/11/12/13/14. review_status/disclaimer gating from Plan 4 |
 
 ### Phase 6 — Hermes Integration (P6)  ⏳
 
