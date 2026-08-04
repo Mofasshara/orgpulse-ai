@@ -56,9 +56,12 @@ def write_run(out: Path, days: int, seed: int, offline: bool):
     """
     if days < 1:
         raise ValueError("days must be >= 1")
+    import hashlib
     import json
+    from dataclasses import asdict
 
     # Lazy import so `orgpulse generate` doesn't pull in Prophet/LangGraph.
+    from orgpulse.governance.audit import HashChainedAuditLog
     from orgpulse.pipeline.graph import render_report, run_pipeline
 
     out.mkdir(parents=True, exist_ok=True)
@@ -67,10 +70,31 @@ def write_run(out: Path, days: int, seed: int, offline: bool):
     qc = generate_qc(start, days, make_rng(seed + 1))
     supply = generate_supply(start, days, make_rng(seed + 2))
     findings = run_pipeline(clinical, qc, supply, offline=offline)
-    (out / "findings.json").write_text(
-        json.dumps(findings.to_json_dict(), indent=2, allow_nan=False)
-    )
+
+    findings_json = json.dumps(findings.to_json_dict(), indent=2, allow_nan=False)
+    (out / "findings.json").write_text(findings_json)
     (out / "report.md").write_text(render_report(findings))
+
+    # EU AI Act Article 12: hash-chained, reconstructable audit log of the run and
+    # every AI-generated recommendation (trace_id, timestamp, model, input hash).
+    model = "offline-stub" if offline else "claude-sonnet-5"
+    input_hash = hashlib.sha256(findings_json.encode("utf-8")).hexdigest()
+    audit = HashChainedAuditLog(out / "audit.jsonl")
+    audit.append(
+        "run",
+        {
+            "overall_severity": findings.overall_severity, "alert": findings.alert,
+            "generated_at": findings.generated_at, "model": model, "offline": offline,
+            "input_hash": input_hash,
+        },
+        trace_id=findings.run_id, timestamp=findings.generated_at,
+    )
+    for i, rec in enumerate(findings.recommendations):
+        audit.append(
+            "recommendation",
+            {**asdict(rec), "model": model, "input_hash": input_hash},
+            trace_id=f"{findings.run_id}:{rec.kpi}:{i}", timestamp=findings.generated_at,
+        )
     return findings
 
 
