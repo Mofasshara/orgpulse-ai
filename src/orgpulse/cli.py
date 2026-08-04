@@ -114,5 +114,28 @@ def run(
     typer.echo(f"wrote {out}/findings.json and {out}/report.md")
 
 
+@app.command()
+def tick(
+    tick_number: int = typer.Option(0, help="Which scheduled tick (0 bootstraps the baseline memory)"),
+    seed: int = typer.Option(42, help="Random seed"),
+    offline: bool = typer.Option(
+        True, "--offline/--online", help="Offline deterministic LLM stub (keyless) vs Claude"
+    ),
+    memory: str = typer.Option("runs/baseline_memory.json", help="Baseline memory file (cross-run state)"),
+    out: str = typer.Option("runs", help="Run-history root"),
+) -> None:
+    """One autonomous tick: detect the current period vs the REMEMBERED baseline, write a
+    timestamped run (+ runs/latest), and update the baseline memory. This is what Hermes
+    invokes on a cron."""
+    from orgpulse.agent.baseline_memory import BaselineMemory
+    from orgpulse.agent.tick import run_tick
+
+    bootstrap = not Path(memory).exists()
+    findings = run_tick(BaselineMemory(Path(memory)), tick_number, seed=seed, offline=offline, out_root=Path(out))
+    mode = "bootstrapped baseline memory" if bootstrap else "used remembered baselines"
+    typer.echo(f"tick {tick_number}: severity {findings.overall_severity}   alert: {findings.alert}   ({mode})")
+    typer.echo(f"wrote {out}/latest/ (findings.json, report.md, audit.jsonl); memory: {memory}")
+
+
 if __name__ == "__main__":
     app()
