@@ -66,3 +66,23 @@ def kpi_domain_reason(kpi: str, arr: np.ndarray) -> str | None:
     if hi is not None and np.any(a > hi):
         return f"value above domain maximum {hi} for {kpi}"
     return None
+
+
+def kpi_series_reason(kpi: str, series, *, min_len: int | None = None) -> str | None:
+    """THE single "is this KPI series usable?" check, shared by every consumer (detection,
+    forecasting, the tick). Returns a DATA_QUALITY reason or None. Checks: numeric &
+    convertible, 1-D, optional minimum length, all-finite, and in-domain. Centralizing this
+    is deliberate — round after round, a second consumer that re-validated on its own forgot
+    a case and let bad data through.
+    """
+    try:
+        a = np.asarray(series, dtype=float)
+    except (ValueError, TypeError):
+        return f"unusable input (non-numeric or ragged) for {kpi}"
+    if a.ndim != 1:
+        return f"unusable input ({a.ndim}-D, expected 1-D) for {kpi}"
+    if min_len is not None and len(a) < min_len:
+        return f"insufficient data ({len(a)} points < {min_len} required) for {kpi}"
+    if a.size == 0 or not np.isfinite(a).all():
+        return f"non-finite values (NaN/inf) for {kpi}"
+    return kpi_domain_reason(kpi, a)

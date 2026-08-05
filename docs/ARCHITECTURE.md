@@ -124,8 +124,10 @@ current pipeline.
   recommendation entries matches the count in `findings.json` (so deleting trailing records —
   which a forward hash chain can't detect on its own — is caught too). Both verifiers (dashboard
   and compute-plane) fail closed on missing/empty/malformed logs; a proven-equivalence test
-  guards against drift between the two implementations. So a decision can be **regenerated** from
-  the recorded lineage and its outputs checked against the logged hashes.
+  guards against drift between the two implementations. An **offline** decision (the deterministic
+  default) can be exactly **regenerated** from the recorded lineage and its outputs checked against
+  the logged hashes; an **online** (Claude) run is fully traceable but its LLM output is stochastic
+  and not bit-reproducible (no model snapshot / decoding params are captured).
 
   **Threat model (stated honestly):** an *unkeyed* hash chain stored in the same writable
   file detects **accidental corruption and naïve tampering** (editing a past entry, or the
