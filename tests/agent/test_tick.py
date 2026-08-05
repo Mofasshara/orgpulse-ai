@@ -122,6 +122,28 @@ def test_tick_audit_records_remembered_baseline_lineage(tmp_path):
     assert b_lo != b_hi            # ...but different remembered baseline IS in the lineage
 
 
+def test_tick_rejects_domain_violation_in_baseline_history_and_saves_no_baseline(tmp_path, monkeypatch):
+    """#3 (r7): a domain violation anywhere in the ingested stream — including old baseline
+    history, not just the current window — must be DATA_QUALITY, and no baseline may be
+    persisted from corrupt data (a poisoned baseline would corrupt the next tick)."""
+    import numpy as np
+    from orgpulse.agent import tick as tickmod
+
+    orig = tickmod.generate_qc
+
+    def corrupt_history(*a, **k):
+        df = orig(*a, **k).copy()
+        df.iloc[0, df.columns.get_loc("pass_rate")] = 1.5   # impossible value in ancient history
+        return df
+
+    monkeypatch.setattr(tickmod, "generate_qc", corrupt_history)
+    mem = BaselineMemory(tmp_path / "m.json")
+    f = run_tick(mem, 0, out_root=tmp_path / "runs", now="2026-08-04T07:00:00", offline=True)
+    sev = {kf.kpi: kf.severity for kf in f.kpi_findings}
+    assert sev["pass_rate"] == "DATA_QUALITY"
+    assert "pass_rate" not in mem.load()                    # corrupt baseline NOT persisted
+
+
 def test_corrupt_baseline_memory_fails_clearly(tmp_path):
     """A corrupt memory file must raise a clear diagnosis, not a raw JSONDecodeError mid-tick."""
     p = tmp_path / "m.json"

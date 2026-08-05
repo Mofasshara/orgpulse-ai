@@ -169,6 +169,70 @@ def test_load_history_marks_forged_and_malformed_runs_unverified(tmp_path: Path)
     assert by_dir[str(run_dirs[1])]["verified"] is False
 
 
+def _seal_run(run_dir: Path, findings: dict, *, report: str = "report", payload_extra: dict | None = None,
+              drop_fields: tuple[str, ...] = ()) -> Path:
+    """Build a genuinely hash-consistent run (findings + report + a valid chained audit with
+    full lineage), so schema/lineage gates are exercised AFTER the hash binding passes."""
+    import hashlib
+    from orgpulse.governance.audit import HashChainedAuditLog
+
+    run_dir.mkdir(parents=True, exist_ok=True)
+    fj = json.dumps(findings)
+    (run_dir / "findings.json").write_text(fj)
+    (run_dir / "report.md").write_text(report)
+    payload = {
+        "findings_hash": hashlib.sha256(fj.encode()).hexdigest(),
+        "report_hash": hashlib.sha256(report.encode()).hexdigest(),
+        "input_data_hash": "0" * 64, "seed": 1, "model": "offline-stub", "offline": True,
+    }
+    payload.update(payload_extra or {})
+    for f in drop_fields:
+        payload.pop(f, None)
+    log = HashChainedAuditLog(run_dir / "audit.jsonl")
+    log.append("run", payload, trace_id="tick-0-t", timestamp="t")
+    recs = findings.get("recommendations")
+    for i, rec in enumerate(recs if isinstance(recs, list) else []):
+        log.append("recommendation", dict(rec), trace_id=f"tick-0-t:{i}", timestamp="t")
+    return run_dir
+
+
+def test_verify_run_rejects_structurally_invalid_findings_even_when_hash_bound(tmp_path: Path):
+    """#4: a hash-consistent run whose findings has recommendations as a non-list (or bad
+    kpi_findings/forecast shape) must fail closed — the dashboard must never render it."""
+    d = _seal_run(tmp_path / "bad_recs",
+                  {"overall_severity": "SAFE", "kpi_findings": [], "forecast": {}, "recommendations": "not-a-list"})
+    ok, reason = data.verify_run(d)
+    assert ok is False and "recommendations" in reason
+
+    d2 = _seal_run(tmp_path / "bad_kf",
+                   {"overall_severity": "SAFE", "kpi_findings": "nope", "forecast": {}, "recommendations": []})
+    assert data.verify_run(d2)[0] is False
+
+
+def test_verify_run_requires_lineage_fields(tmp_path: Path):
+    """#6: a run advertised as Article-12 lineage-complete must not verify without its lineage."""
+    good = {"overall_severity": "SAFE", "kpi_findings": [], "forecast": {}, "recommendations": []}
+    assert data.verify_run(_seal_run(tmp_path / "ok", good))[0] is True
+    for missing in ("input_data_hash", "seed", "model"):
+        d = _seal_run(tmp_path / f"no_{missing}", good, drop_fields=(missing,))
+        ok, reason = data.verify_run(d)
+        assert ok is False and missing in reason
+
+
+def test_verify_run_and_history_never_crash_on_unreadable_artifacts(tmp_path: Path):
+    """#5: directory-as-file, invalid UTF-8, and malformed history must fail closed, never raise."""
+    d = tmp_path / "dir_findings"; d.mkdir(); (d / "findings.json").mkdir()
+    assert data.verify_run(d)[0] is False
+    u = tmp_path / "bad_utf8"; u.mkdir()
+    (u / "findings.json").write_text("{}"); (u / "audit.jsonl").write_bytes(b"\xff\xfe")
+    assert data.verify_audit(u / "audit.jsonl") is False
+    # a runs root with a malformed run must not crash load_history
+    root = tmp_path / "runs"; bad = root / "2026-01-01"; bad.mkdir(parents=True)
+    (bad / "findings.json").write_bytes(b"\xff\xfe invalid")
+    hist = data.load_history(root)
+    assert hist and hist[0]["verified"] is False
+
+
 def test_load_history_newest_first(tmp_path: Path):
     runs = _seed_two_runs(tmp_path)
     hist = data.load_history(runs)

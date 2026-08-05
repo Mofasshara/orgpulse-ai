@@ -31,27 +31,39 @@ def _entry_hash(prev_hash: str, seq: int, timestamp: str, trace_id: str, kind: s
     return _sha256("|".join([prev_hash, str(seq), timestamp, trace_id, kind, payload_hash]))
 
 
+def _safe_read_text(path: Path) -> str | None:
+    """Read a file's text, returning None on ANY filesystem/encoding problem (missing, a
+    directory, invalid UTF-8, permissions). Every artifact read on the presentation plane goes
+    through this so a malformed file fails closed instead of crashing the dashboard/history."""
+    try:
+        return Path(path).read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+
+
 def load_findings(run_dir: str | Path) -> dict:
     """Load ``findings.json`` for one run directory."""
     return json.loads((Path(run_dir) / "findings.json").read_text())
 
 
 def load_report(run_dir: str | Path) -> str:
-    """Load the human-readable ``report.md`` for one run (empty string if absent)."""
-    path = Path(run_dir) / "report.md"
-    return path.read_text() if path.exists() else ""
+    """Load the human-readable ``report.md`` for one run (empty string if absent/unreadable)."""
+    return _safe_read_text(Path(run_dir) / "report.md") or ""
 
 
 def load_audit(audit_path: str | Path) -> list[dict]:
     """Return the audit entries (list of dicts) for one run, in sequence order.
 
     Malformed lines raise ``json.JSONDecodeError`` to the caller; ``verify_*`` treat that
-    as a verification failure rather than crashing the dashboard.
+    (and any read/encoding error, surfaced as JSONDecodeError) as a verification failure.
     """
     path = Path(audit_path)
     if not path.exists():
         return []
-    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    text = _safe_read_text(path)
+    if text is None:  # unreadable / invalid UTF-8 / a directory → treat as malformed
+        raise json.JSONDecodeError("unreadable audit log", "", 0)
+    return [json.loads(line) for line in text.splitlines() if line.strip()]
 
 
 def verify_audit(audit_path: str | Path) -> bool:
@@ -93,7 +105,9 @@ def verify_run(run_dir: str | Path) -> tuple[bool, str]:
 
     Returns ``(ok, reason)``. Fails closed if: the chain doesn't verify; the log is
     empty or its first entry isn't a genesis ``run`` entry; or — critically — the current
-    ``findings.json`` bytes don't hash to the ``input_hash`` the run entry attests to.
+    ``findings.json`` bytes don't hash to the ``findings_hash`` the run entry attests to;
+    ``report.md`` doesn't match its ``report_hash``; the required lineage fields are missing;
+    or the findings schema is invalid.
     This closes the forged-``findings.json`` hole where editing only the findings (leaving
     the intact chain untouched) would otherwise still show "verified".
     """
@@ -125,32 +139,48 @@ def verify_run(run_dir: str | Path) -> tuple[bool, str]:
     if not isinstance(findings_hash, str):
         return False, "genesis run entry has no findings hash"
 
-    findings_text = findings_path.read_text()
+    # Require the Article-12 LINEAGE fields the docs advertise — a run missing them is not
+    # "lineage-complete" and must not verify (the schema always writes these).
+    for field in ("report_hash", "input_data_hash", "model"):
+        if not isinstance(payload.get(field), str):
+            return False, f"genesis run entry missing lineage field: {field}"
+    if "seed" not in payload:
+        return False, "genesis run entry missing lineage field: seed"
+    report_hash = payload["report_hash"]
+
+    findings_text = _safe_read_text(findings_path)
+    if findings_text is None:
+        return False, "findings.json is unreadable (bad encoding / not a file)"
     if _sha256(findings_text) != findings_hash:
         return False, "findings.json does not match the audited findings hash (tampered)"
 
-    # report.md is a human-consumed artifact, so it is REQUIRED to be bound (the current schema
-    # always records report_hash; a run entry without it, or a forged report, fails closed).
-    report_hash = payload.get("report_hash")
-    if not isinstance(report_hash, str):
-        return False, "genesis run entry has no report hash"
-    if not report_path.exists() or _sha256(report_path.read_text()) != report_hash:
-        return False, "report.md does not match the audited report hash (tampered)"
+    # report.md is a human-consumed artifact, so it is REQUIRED to be bound (forging it fails).
+    report_text = _safe_read_text(report_path)
+    if report_text is None or _sha256(report_text) != report_hash:
+        return False, "report.md missing/unreadable or does not match the audited report hash"
 
-    # Validate findings shape before indexing, then bind the recommendation COUNT so
-    # tail-truncation is caught (a forward hash chain can't detect deleted trailing entries).
+    # Validate the findings SCHEMA before trusting it — a hash-consistent but structurally
+    # invalid findings (e.g. recommendations not a list) must fail closed, not be rendered.
     try:
         fj = json.loads(findings_text)
     except json.JSONDecodeError:
         return False, "findings.json is not valid JSON"
     if not isinstance(fj, dict):
         return False, "findings.json has an unexpected shape"
-    recs = fj.get("recommendations")
-    n_expected = len(recs) if isinstance(recs, list) else 0
+    if not isinstance(fj.get("kpi_findings", []), list):
+        return False, "findings.json: kpi_findings is not a list"
+    if not isinstance(fj.get("forecast", {}), dict):
+        return False, "findings.json: forecast is not an object"
+    recs = fj.get("recommendations", [])
+    if not isinstance(recs, list):
+        return False, "findings.json: recommendations is not a list"
+
+    # Bind the recommendation COUNT so tail-truncation is caught (a forward hash chain can't
+    # detect deleted trailing entries on its own).
     n_logged = sum(1 for e in entries if isinstance(e, dict) and e.get("kind") == "recommendation")
-    if n_logged != n_expected:
+    if n_logged != len(recs):
         return False, (
-            f"audit records {n_logged} recommendation(s) but findings declares {n_expected} "
+            f"audit records {n_logged} recommendation(s) but findings declares {len(recs)} "
             "(entries truncated or added)"
         )
     return True, "chain verified and bound to findings.json + report.md"
@@ -167,18 +197,19 @@ def load_history(runs_root: str | Path) -> list[dict]:
         return []
     rows: list[dict] = []
     for child in sorted(root.iterdir()):
-        if not child.is_dir() or child.name == "latest":
-            continue
-        if not (child / "findings.json").exists():
-            continue
-        # Every historical run is verified and bound to its audit trail before it is trusted.
-        # An unverified/forged/malformed run is surfaced as UNVERIFIED — its (untrusted)
-        # severity is NOT shown as ordinary history, and one bad run never crashes the strip.
-        ok, _reason = verify_run(child)
         try:
-            d = json.loads((child / "findings.json").read_text())
+            if not child.is_dir() or child.name == "latest":
+                continue
+            if not (child / "findings.json").exists():
+                continue
+            # Every historical run is verified and bound to its audit trail before it is trusted.
+            # An unverified/forged/malformed run is surfaced as UNVERIFIED — its (untrusted)
+            # severity is NOT shown as ordinary history, and one bad run never crashes the strip.
+            ok, _reason = verify_run(child)
+            text = _safe_read_text(child / "findings.json")
+            d = json.loads(text) if text is not None else None
             if not isinstance(d, dict):
-                raise ValueError("findings.json is not an object")
+                ok, d = False, {}
         except (json.JSONDecodeError, OSError, ValueError):
             ok, d = False, {}
         rows.append(

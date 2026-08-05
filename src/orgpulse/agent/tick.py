@@ -13,7 +13,7 @@ from orgpulse.agent.baseline_memory import BaselineMemory
 from orgpulse.config import make_rng
 from orgpulse.detect.baseline import fit_baseline
 from orgpulse.detect.cusum import _MIN_BASELINE_N, cusum_detect
-from orgpulse.detect.validation import kpi_domain_reason
+from orgpulse.detect.validation import kpi_series_reason
 from orgpulse.detect.orchestrator import overall_severity
 from orgpulse.detect.types import Severity
 from orgpulse.detect.zscore import zscore_detect
@@ -95,37 +95,24 @@ def run_tick(
     used_bootstrap = False
 
     for kpi, series in _kpi_series(clinical, qc, supply):
-        # Guard dtype conversion (e.g. a stringified/corrupt generator column) so a bad KPI
-        # becomes DATA_QUALITY instead of crashing the whole tick.
-        try:
-            s = np.asarray(series, dtype=float)
-        except (ValueError, TypeError):
-            findings.append(data_quality_finding(kpi, "unusable input (non-numeric/ragged)"))
+        # Validate the WHOLE ingested series through the shared gate (numeric, 1-D, >= the
+        # detection window, all-finite, in-domain). A violation ANYWHERE — including in the
+        # baseline history, not just the current window — is DATA_QUALITY, and NO baseline is
+        # persisted from corrupt data (a bad baseline would poison the next tick's detection).
+        reason = kpi_series_reason(kpi, series, min_len=n)
+        if reason is not None:
+            findings.append(data_quality_finding(kpi, reason))
             continue
+        s = np.asarray(series, dtype=float)
 
-        # Established trailing baseline (long window) becomes the NEXT tick's baseline; kept
-        # longer than the detection window so CUSUM's ≥60-sample calibration holds. Saved
-        # independently of current-period validity, but never below the detector minimum.
-        baseline_window = s[-baseline_days:] if s.ndim == 1 else np.asarray([])
-        finite_bl = baseline_window[np.isfinite(baseline_window)] if baseline_window.size else baseline_window
-        if finite_bl.size >= _MIN_BASELINE_N:
-            new_baselines[kpi] = fit_baseline(finite_bl)
+        # Established trailing baseline (long window, now validated finite + in-domain) becomes
+        # the NEXT tick's baseline; kept longer than the detection window so CUSUM's ≥60-sample
+        # calibration holds. Persisted only when the window meets the detector minimum.
+        baseline_window = s[-baseline_days:]
+        if baseline_window.size >= _MIN_BASELINE_N:
+            new_baselines[kpi] = fit_baseline(baseline_window)
 
-        # Fail-safe assessment of the CURRENT period: unusable data is DATA_QUALITY, never
-        # omitted and never SAFE — INCLUDING on the bootstrap path (no remembered baseline).
-        # SAFE is only assigned after the current window is validated finite and sufficient.
-        if s.ndim != 1 or len(s) < n:
-            findings.append(data_quality_finding(kpi, f"insufficient/malformed current period (n={s.size})"))
-            continue
         current = s[-n:]
-        if not np.isfinite(current).all():
-            findings.append(data_quality_finding(kpi, "non-finite values in current period"))
-            continue
-        domain_bad = kpi_domain_reason(kpi, current)
-        if domain_bad is not None:
-            findings.append(data_quality_finding(kpi, f"impossible value: {domain_bad}"))
-            continue
-
         prior = remembered.get(kpi)
         if prior is not None:
             results = [

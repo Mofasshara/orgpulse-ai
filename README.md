@@ -39,9 +39,11 @@ uv run python scripts/seed_runs.py
 uv run --extra dashboard streamlit run streamlit_app/app.py
 ```
 
-Keyless by default: the reasoning nodes use a deterministic offline stub. Set
-`ANTHROPIC_API_KEY` to route the analyst/recommendation nodes through **Claude Sonnet**
-(`claude-sonnet-5`) instead — the audit trail records which model produced each recommendation.
+Keyless by default: the reasoning nodes use a deterministic offline stub. To route the
+analyst/recommendation nodes through **Claude Sonnet** (`claude-sonnet-5`) instead, set
+`ANTHROPIC_API_KEY` **and** pass `--online` (the CLI defaults to `--offline`) — the audit trail
+records which model produced each recommendation. Note: offline runs are deterministically
+reproducible; online (Claude) runs are traceable but the LLM output is not bit-reproducible.
 
 ## What it does
 

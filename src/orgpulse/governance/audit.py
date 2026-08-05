@@ -73,7 +73,7 @@ class HashChainedAuditLog:
         # Fail closed on any malformed log (bad JSON, wrong shape) rather than raising.
         try:
             raw = self._read_raw()
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError, UnicodeError):
             return False
         if not raw:                       # an empty/missing log is NOT a verified record
             return False

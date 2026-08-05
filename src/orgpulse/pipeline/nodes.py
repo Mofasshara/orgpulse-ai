@@ -4,12 +4,36 @@ import math
 from typing import TypedDict
 
 import numpy as np
+import pandas as pd
 
 from orgpulse.detect.orchestrator import detect_kpi, overall_severity
 from orgpulse.detect.types import Severity
-from orgpulse.detect.validation import kpi_domain_reason
+from orgpulse.detect.validation import kpi_domain_reason, kpi_series_reason
 from orgpulse.forecast.calibration import interval_calibration
 from orgpulse.forecast.prophet_forecaster import forecast_kpi, series_from_generator
+
+
+def validated_clinical_daily(df: pd.DataFrame) -> pd.DataFrame:
+    """Validate RAW clinical rows before aggregating to a daily series — the single builder
+    used by BOTH detection and forecasting. Aggregation hides per-row corruption (a negative
+    site total sums into a plausible positive), so per-site validity is checked here, first.
+
+    Raises ValueError if: a date is missing/NaT; (date, site_id) is not unique; or any present
+    per-site daily_enrollment is negative or non-integer (enrollment is a nonnegative count).
+    NaN per-site values are allowed — they propagate to a NaN daily total (→ DATA_QUALITY).
+    Returns the daily (ds, y) frame with any-NaN-in-a-day → NaN.
+    """
+    if "date" not in df.columns or "daily_enrollment" not in df.columns:
+        raise ValueError("clinical frame missing required columns")
+    if df["date"].isna().any():
+        raise ValueError("clinical frame has missing/NaT dates")
+    if "site_id" in df.columns and df.duplicated(["date", "site_id"]).any():
+        raise ValueError("duplicate (date, site_id) clinical records")
+    vals = pd.to_numeric(df["daily_enrollment"], errors="coerce")
+    present = vals[df["daily_enrollment"].notna()]
+    if ((present < 0) | (present != present.round())).any():
+        raise ValueError("impossible per-site enrollment (negative or non-integer count)")
+    return series_from_generator(df, "date", "daily_enrollment")
 from orgpulse.pipeline.llm import LLMClient
 from orgpulse.pipeline.state import (
     HUMAN_OVERSIGHT_DISCLAIMER,
@@ -41,19 +65,10 @@ def _kpi_finding(kpi: str, series) -> KpiFinding:
     - a series shorter than 120 points, non-1-D, non-numeric, non-finite, or with any value
       outside the KPI's real-world domain becomes DATA_QUALITY (never silently skipped).
     """
-    try:
-        s = np.asarray(series, dtype=float)
-    except (ValueError, TypeError):
-        return data_quality_finding(kpi, "unusable input (non-numeric or ragged)")
-    if s.ndim != 1:
-        return data_quality_finding(kpi, f"unusable input ({s.ndim}-D, expected 1-D)")
-    if len(s) < 120:  # need >=90 baseline + 30 recent
-        return data_quality_finding(kpi, f"insufficient data ({len(s)} points < 120 required)")
-    if not np.isfinite(s).all():
-        return data_quality_finding(kpi, "non-finite values (NaN/inf)")
-    domain_bad = kpi_domain_reason(kpi, s)
-    if domain_bad is not None:
-        return data_quality_finding(kpi, f"impossible value: {domain_bad}")
+    reason = kpi_series_reason(kpi, series, min_len=120)  # 1-D, numeric, >=120, finite, in-domain
+    if reason is not None:
+        return data_quality_finding(kpi, reason)
+    s = np.asarray(series, dtype=float)
     baseline, recent = s[:-30], s[-30:]
     results = detect_kpi(baseline, recent, kpi=kpi)  # returns DATA_QUALITY on non-finite data
     sev = overall_severity(results)
@@ -80,17 +95,11 @@ def detect_node(state: PipelineState) -> DetectNodeOutput:
     # array conversion happen INSIDE the guard below so that a missing column, a 2-D/ragged
     # column, or any schema corruption becomes a DATA_QUALITY finding rather than crashing the
     # run — upholding the "bad data never crashes, never reads SAFE" contract at the node level.
-    def _clinical_series():
-        df = state["clinical"]
-        # Duplicate (date, site_id) rows would double-count the daily total. Reject them as
-        # unusable input rather than silently inflating enrollment.
-        if "site_id" in df.columns and df.duplicated(["date", "site_id"]).any():
-            raise ValueError("duplicate (date, site_id) clinical records")
-        return series_from_generator(df, "date", "daily_enrollment")["y"].to_numpy()
-
     extractors: list[tuple[str, callable]] = []
     if "clinical" in state:
-        extractors.append(("daily_enrollment", _clinical_series))
+        extractors.append(
+            ("daily_enrollment", lambda: validated_clinical_daily(state["clinical"])["y"].to_numpy())
+        )
     if "qc" in state:
         extractors.append(("pass_rate", lambda: state["qc"]["pass_rate"].to_numpy()))
         extractors.append(("calibration_offset", lambda: state["qc"]["calibration_offset"].to_numpy()))
@@ -135,16 +144,16 @@ def forecast_node(state: PipelineState) -> ForecastNodeOutput:
     forecast_result = {}
 
     if "clinical" in state:
-        clinical_df = state["clinical"]
-        # Build daily series. Guard corrupt/unusable input: a non-finite or too-short hero
-        # series must not be fed to Prophet (it would crash or emit a meaningless forecast).
-        # Detection already flags such a stream DATA_QUALITY; here we simply publish no forecast.
+        # Build the daily series through the SAME validated builder + series check that
+        # detection uses — so a hero KPI that detection rules DATA_QUALITY (out-of-domain,
+        # duplicate rows, NaT dates, non-integer/negative per-site counts, non-finite, too
+        # short) never yields a numeric forecast. One validator, both consumers.
         try:
-            daily_df = series_from_generator(clinical_df, "date", "daily_enrollment")
+            daily_df = validated_clinical_daily(state["clinical"])
             y = daily_df["y"].to_numpy(dtype=float)
         except (KeyError, ValueError, TypeError):
             return {"forecast": forecast_result}
-        if len(y) < 120 or not np.isfinite(y).all():
+        if kpi_series_reason("daily_enrollment", y, min_len=120) is not None:
             return {"forecast": forecast_result}
 
         # Forecast at horizons 30, 60, 90

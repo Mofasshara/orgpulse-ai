@@ -158,6 +158,30 @@ def test_duplicate_clinical_records_are_data_quality():
     assert hero.severity == "DATA_QUALITY"
 
 
+def test_forecast_uses_the_same_gate_as_detection():
+    """#1 (r7): forecasting must NOT publish a numeric forecast for a hero series detection rules
+    DATA_QUALITY — per-site negative (masked by the sum), NaT date, non-integer count, duplicate."""
+    import numpy as np
+    import pandas as pd
+    from datetime import date
+    from orgpulse.generators.clinical import generate_clinical
+
+    base = generate_clinical(date(2026, 1, 1), 200, make_rng(42))
+    cases = {}
+    c = base.copy(); c["daily_enrollment"] = 1; c.loc[c.site_id == 0, "daily_enrollment"] = -1
+    cases["per_site_negative"] = c                                   # aggregate stays positive
+    c = base.copy(); c.loc[c.index[0], "date"] = pd.NaT
+    cases["nat_date"] = c
+    c = base.copy(); c["daily_enrollment"] = 0.5
+    cases["fractional_count"] = c
+    cases["duplicate"] = pd.concat([base, base.iloc[[0]]], ignore_index=True)
+
+    for name, clin in cases.items():
+        hero = next(f for f in detect_node({"clinical": clin})["kpi_findings"] if f.kpi == "daily_enrollment")
+        assert hero.severity == "DATA_QUALITY", name
+        assert forecast_node({"clinical": clin})["forecast"].get("daily_enrollment") is None, name
+
+
 def test_detect_node_survives_malformed_inputs_as_data_quality():
     """Schema-corrupt / 2-D KPI inputs must become DATA_QUALITY findings, not crash."""
     import numpy as np
