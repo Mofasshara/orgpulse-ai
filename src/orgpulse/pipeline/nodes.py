@@ -29,11 +29,17 @@ def validated_clinical_daily(df: pd.DataFrame) -> pd.DataFrame:
         raise ValueError("clinical frame has missing/NaT dates")
     if "site_id" in df.columns and df.duplicated(["date", "site_id"]).any():
         raise ValueError("duplicate (date, site_id) clinical records")
-    vals = pd.to_numeric(df["daily_enrollment"], errors="coerce")
-    present = vals[df["daily_enrollment"].notna()]
+    # Coerce to numeric and AGGREGATE THE COERCED VALUES — not the raw column. A string dtype
+    # column would otherwise be "summed" by pandas via concatenation ("1"×8 → "11111111"),
+    # a wrong-dtype fail-open. Non-numeric strings coerce to NaN (→ more NaN than the original
+    # had → reject); numeric strings coerce correctly.
+    coerced = pd.to_numeric(df["daily_enrollment"], errors="coerce")
+    if int(coerced.isna().sum()) != int(df["daily_enrollment"].isna().sum()):
+        raise ValueError("non-numeric enrollment values")
+    present = coerced[coerced.notna()]
     if ((present < 0) | (present != present.round())).any():
         raise ValueError("impossible per-site enrollment (negative or non-integer count)")
-    return series_from_generator(df, "date", "daily_enrollment")
+    return series_from_generator(df.assign(daily_enrollment=coerced), "date", "daily_enrollment")
 from orgpulse.pipeline.llm import LLMClient
 from orgpulse.pipeline.state import (
     HUMAN_OVERSIGHT_DISCLAIMER,
@@ -270,18 +276,23 @@ def recommendation_node(state: PipelineState, llm: LLMClient) -> dict:
         prompt = "\n".join(prompt_lines)
 
         rec_dicts = llm.recommend("You are a quality assurance CAPA expert.", prompt, kpis=anomaly_kpis)
+        requested = set(anomaly_kpis)
         for rec_dict in rec_dicts if isinstance(rec_dicts, list) else []:
-            # Be defensive about the LLM's output shape (the online Claude path is not
-            # schema-guaranteed at runtime): a malformed item is skipped rather than crashing
-            # the governed pipeline with a KeyError. The anomaly still surfaces via the finding
-            # and the alert (which fire on overall_severity, not on rec presence).
-            if not (isinstance(rec_dict, dict) and {"kpi", "text", "capa_frame"} <= rec_dict.keys()):
+            # Be strict about the LLM's output (the online Claude path is not schema-guaranteed
+            # at runtime): the item must be a dict whose kpi is one we REQUESTED and whose text
+            # and capa_frame are non-empty strings. Malformed values (None text, numeric
+            # capa_frame) and invented KPIs are SKIPPED, not coerced into a governed rec — the
+            # anomaly still surfaces via the finding + alert (which fire on overall_severity).
+            if not isinstance(rec_dict, dict):
+                continue
+            kpi, text, frame = rec_dict.get("kpi"), rec_dict.get("text"), rec_dict.get("capa_frame")
+            if not (isinstance(kpi, str) and kpi in requested
+                    and isinstance(text, str) and text.strip()
+                    and isinstance(frame, str) and frame.strip()):
                 continue
             recommendations.append(
                 Recommendation(
-                    kpi=str(rec_dict["kpi"]),
-                    text=str(rec_dict["text"]),
-                    capa_frame=str(rec_dict["capa_frame"]),
+                    kpi=kpi, text=text, capa_frame=frame,
                     disclaimer=HUMAN_OVERSIGHT_DISCLAIMER,
                     review_status="PENDING_HUMAN_REVIEW",
                 )

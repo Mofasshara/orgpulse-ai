@@ -146,6 +146,34 @@ def test_tick_catches_per_site_clinical_corruption_masked_by_aggregation(tmp_pat
         assert sev == "DATA_QUALITY", name
 
 
+def test_tick_requires_full_baseline_history_matching_the_run_path(tmp_path, monkeypatch):
+    """#2 (r8): a too-short stream read a free bootstrap SAFE in the tick while the run path
+    said DATA_QUALITY. The tick now requires baseline_days of history, closing the divergence."""
+    from datetime import date
+    from orgpulse.agent import tick as tickmod
+    from orgpulse.config import make_rng
+    from orgpulse.generators.clinical import generate_clinical
+
+    monkeypatch.setattr(tickmod, "generate_clinical",
+                        lambda *a, **k: generate_clinical(date(2026, 1, 1), 30, make_rng(42)))
+    f = run_tick(BaselineMemory(tmp_path / "m.json"), 0, out_root=tmp_path / "runs",
+                 now="2026-01-01T00:00:00", offline=True)
+    assert {k.kpi: k.severity for k in f.kpi_findings}["daily_enrollment"] == "DATA_QUALITY"
+
+
+def test_tick_rejects_out_of_domain_remembered_baseline(tmp_path):
+    """#3 (r8): the remembered baseline drives detection; a corrupt one (pass_rate mean 1.1,
+    impossible) must not silently produce SAFE."""
+    from orgpulse.detect.baseline import Baseline
+
+    mem = BaselineMemory(tmp_path / "m.json")
+    mem.save({k: Baseline(mean=1.1, std=100.0, n=120)
+              for k in ("daily_enrollment", "pass_rate", "calibration_offset", "lead_time_days")})
+    f = run_tick(mem, 1, out_root=tmp_path / "runs", now="2026-01-01T00:00:00", offline=True)
+    assert {k.kpi: k.severity for k in f.kpi_findings}["pass_rate"] == "DATA_QUALITY"
+    assert f.overall_severity == "DATA_QUALITY"
+
+
 def test_tick_rejects_domain_violation_in_baseline_history_and_saves_no_baseline(tmp_path, monkeypatch):
     """#3 (r7): a domain violation anywhere in the ingested stream — including old baseline
     history, not just the current window — must be DATA_QUALITY, and no baseline may be

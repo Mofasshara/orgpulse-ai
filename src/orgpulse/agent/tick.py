@@ -13,7 +13,7 @@ from orgpulse.agent.baseline_memory import BaselineMemory
 from orgpulse.config import make_rng
 from orgpulse.detect.baseline import fit_baseline
 from orgpulse.detect.cusum import _MIN_BASELINE_N, cusum_detect
-from orgpulse.detect.validation import kpi_series_reason
+from orgpulse.detect.validation import kpi_domain_reason, kpi_series_reason
 from orgpulse.detect.orchestrator import overall_severity
 from orgpulse.detect.types import Severity
 from orgpulse.detect.zscore import zscore_detect
@@ -75,8 +75,10 @@ def run_tick(
 
     Parameters are validated so the statistical preconditions the baseline window depends
     on cannot be silently violated: ``days_per_period > 0``, ``baseline_days >= 60`` (the
-    CUSUM floor), and ``base_days >= max(60, days_per_period)`` so the very first tick has
-    both a full detection window and a usable (>=60-sample) baseline.
+    CUSUM floor), and ``base_days >= max(baseline_days, days_per_period)`` so the very first
+    tick has both a full detection window and a full baseline window (matching the run
+    pipeline's rigor: an ingested stream shorter than ``baseline_days`` is DATA_QUALITY, not
+    a free bootstrap SAFE).
     """
     for name, val in (("tick_number", tick_number), ("days_per_period", days_per_period),
                       ("baseline_days", baseline_days), ("base_days", base_days)):
@@ -91,9 +93,9 @@ def run_tick(
             f"baseline_days must be >= {_MIN_BASELINE_N} (the CUSUM calibration floor), "
             f"got {baseline_days}"
         )
-    if base_days < max(_MIN_BASELINE_N, days_per_period):
+    if base_days < max(baseline_days, days_per_period):
         raise ValueError(
-            f"base_days must be >= max({_MIN_BASELINE_N}, days_per_period={days_per_period}) "
+            f"base_days must be >= max(baseline_days={baseline_days}, days_per_period={days_per_period}) "
             f"so tick 0 has a full detection window and a usable baseline, got {base_days}"
         )
     days = base_days + tick_number * days_per_period
@@ -113,11 +115,13 @@ def run_tick(
         if structural_reason is not None:
             findings.append(data_quality_finding(kpi, structural_reason))
             continue
-        # Validate the WHOLE ingested series through the shared gate (numeric, 1-D, >= the
-        # detection window, all-finite, in-domain). A violation ANYWHERE — including in the
-        # baseline history, not just the current window — is DATA_QUALITY, and NO baseline is
+        # Validate the WHOLE ingested series through the shared gate (numeric, 1-D, >= a full
+        # baseline window, all-finite, in-domain). Requiring baseline_days (not just the
+        # detection window) matches the run pipeline's minimum and closes the run/tick
+        # divergence where a too-short stream read a free bootstrap SAFE. A violation
+        # ANYWHERE — including in the baseline history — is DATA_QUALITY, and NO baseline is
         # persisted from corrupt data (a bad baseline would poison the next tick's detection).
-        reason = kpi_series_reason(kpi, series, min_len=n)
+        reason = kpi_series_reason(kpi, series, min_len=baseline_days)
         if reason is not None:
             findings.append(data_quality_finding(kpi, reason))
             continue
@@ -132,6 +136,12 @@ def run_tick(
 
         current = s[-n:]
         prior = remembered.get(kpi)
+        # The remembered baseline DRIVES detection and is loaded from a writable file, so a
+        # corrupt/impossible baseline (e.g. a pass_rate mean of 1.1) must not silently produce
+        # SAFE — validate its mean against the KPI domain before trusting it.
+        if prior is not None and kpi_domain_reason(kpi, np.asarray([prior.mean])) is not None:
+            findings.append(data_quality_finding(kpi, "remembered baseline mean out of domain (corrupt memory)"))
+            continue
         if prior is not None:
             results = [
                 zscore_detect(float(current[-1]), prior, kpi=kpi),

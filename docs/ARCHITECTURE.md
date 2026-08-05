@@ -73,7 +73,8 @@ alive**: the dashboard has no model to run and no key to hold — it renders com
    applied to the published bounds, not just diagnosed). Backtested honestly (it does *not*
    beat naïve; out-of-sample interval coverage is not claimed).
 3. **analyst** — an LLM turns the numbers into a GxP-framed interpretation. Offline
-   deterministic stub by default (keyless); Claude Sonnet when `ANTHROPIC_API_KEY` is set.
+   deterministic stub by default (keyless); Claude Sonnet when `ANTHROPIC_API_KEY` is set
+   **and** `--online` is passed (the CLI defaults to `--offline`).
 4. **recommend** — a human-gated CAPA recommendation per anomaly, each
    `PENDING_HUMAN_REVIEW` with an EU AI Act Art. 14 disclaimer. Data-quality findings get a
    distinct "do not open a CAPA — fix the data" recommendation instead.

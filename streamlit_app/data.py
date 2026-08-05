@@ -100,6 +100,48 @@ def verify_audit(audit_path: str | Path) -> bool:
     return True
 
 
+def _is_num(x) -> bool:
+    return isinstance(x, (int, float)) and not isinstance(x, bool)
+
+
+def _findings_schema_reason(fj: dict) -> str | None:
+    """Validate the FULL findings schema the dashboard renders — not just the top-level
+    container types. A hash-consistent but structurally invalid findings (a kpi_finding
+    missing `severity`, a forecast with only `h30`, a numeric `generated_at`, a recommendation
+    missing `text`) must fail closed here, before the app indexes into it and crashes."""
+    for f in ("run_id", "generated_at", "overall_severity"):
+        if not isinstance(fj.get(f), str):
+            return f"{f} is not a string"
+    kfs = fj.get("kpi_findings", [])
+    if not isinstance(kfs, list):
+        return "kpi_findings is not a list"
+    for k in kfs:
+        if not isinstance(k, dict) or not all(isinstance(k.get(x), str) for x in ("kpi", "severity", "detail")):
+            return "a kpi_finding is not an object with kpi/severity/detail strings"
+        if not (k.get("latest_value") is None or _is_num(k.get("latest_value"))):
+            return "a kpi_finding latest_value is not a number or null"
+    fc = fj.get("forecast", {})
+    if not isinstance(fc, dict):
+        return "forecast is not an object"
+    hero = fc.get("daily_enrollment")
+    if hero is not None:
+        if not isinstance(hero, dict):
+            return "forecast.daily_enrollment is not an object"
+        for h in ("h30", "h60", "h90"):  # the dashboard requires all three when a forecast is present
+            hh = hero.get(h)
+            if not isinstance(hh, dict) or not all(_is_num(hh.get(b)) for b in ("yhat", "lower", "upper")):
+                return f"forecast.{h} missing numeric yhat/lower/upper"
+    recs = fj.get("recommendations", [])
+    if not isinstance(recs, list):
+        return "recommendations is not a list"
+    for r in recs:
+        if not isinstance(r, dict) or not all(
+            isinstance(r.get(x), str) for x in ("kpi", "text", "capa_frame", "review_status", "disclaimer")
+        ):
+            return "a recommendation is missing a required string field"
+    return None
+
+
 def verify_run(run_dir: str | Path) -> tuple[bool, str]:
     """Verify the audit chain AND bind it to the findings on screen.
 
@@ -167,16 +209,13 @@ def verify_run(run_dir: str | Path) -> tuple[bool, str]:
         return False, "findings.json is not valid JSON"
     if not isinstance(fj, dict):
         return False, "findings.json has an unexpected shape"
-    if not isinstance(fj.get("kpi_findings", []), list):
-        return False, "findings.json: kpi_findings is not a list"
-    if not isinstance(fj.get("forecast", {}), dict):
-        return False, "findings.json: forecast is not an object"
-    recs = fj.get("recommendations", [])
-    if not isinstance(recs, list):
-        return False, "findings.json: recommendations is not a list"
+    schema_bad = _findings_schema_reason(fj)
+    if schema_bad is not None:
+        return False, f"findings.json schema invalid ({schema_bad})"
 
     # Bind the recommendation COUNT so tail-truncation is caught (a forward hash chain can't
-    # detect deleted trailing entries on its own).
+    # detect deleted trailing entries on its own). Schema validation already confirmed it's a list.
+    recs = fj.get("recommendations", [])
     n_logged = sum(1 for e in entries if isinstance(e, dict) and e.get("kind") == "recommendation")
     if n_logged != len(recs):
         return False, (
@@ -214,8 +253,10 @@ def load_history(runs_root: str | Path) -> list[dict]:
             ok, d = False, {}
         rows.append(
             {
-                "run_id": d.get("run_id", child.name),
-                "generated_at": d.get("generated_at", child.name),
+                "run_id": str(d.get("run_id") or child.name),
+                # Always a string: an unverified run's findings may carry a non-string
+                # generated_at, which would crash the sort below (int vs str comparison).
+                "generated_at": str(d.get("generated_at") or child.name),
                 "verified": bool(ok),
                 # Only a verified run may show its severity; otherwise it reads UNVERIFIED
                 # (never a forged "Safe"). Missing/blank severity is DATA_QUALITY, not Safe.

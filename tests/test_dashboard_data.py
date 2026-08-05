@@ -177,6 +177,10 @@ def _seal_run(run_dir: Path, findings: dict, *, report: str = "report", payload_
     from orgpulse.governance.audit import HashChainedAuditLog
 
     run_dir.mkdir(parents=True, exist_ok=True)
+    # Fill in schema-required top-level fields unless the test overrode them.
+    findings = {"run_id": "tick-0-t", "generated_at": "2026-01-01T00:00:00",
+                "overall_severity": "SAFE", "kpi_findings": [], "forecast": {},
+                "recommendations": [], **findings}
     fj = json.dumps(findings)
     (run_dir / "findings.json").write_text(fj)
     (run_dir / "report.md").write_text(report)
@@ -191,7 +195,7 @@ def _seal_run(run_dir: Path, findings: dict, *, report: str = "report", payload_
     log = HashChainedAuditLog(run_dir / "audit.jsonl")
     log.append("run", payload, trace_id="tick-0-t", timestamp="t")
     recs = findings.get("recommendations")
-    for i, rec in enumerate(recs if isinstance(recs, list) else []):
+    for i, rec in enumerate(r for r in (recs if isinstance(recs, list) else []) if isinstance(r, dict)):
         log.append("recommendation", dict(rec), trace_id=f"tick-0-t:{i}", timestamp="t")
     return run_dir
 
@@ -207,6 +211,33 @@ def test_verify_run_rejects_structurally_invalid_findings_even_when_hash_bound(t
     d2 = _seal_run(tmp_path / "bad_kf",
                    {"overall_severity": "SAFE", "kpi_findings": "nope", "forecast": {}, "recommendations": []})
     assert data.verify_run(d2)[0] is False
+
+
+def test_verify_run_rejects_nested_schema_malformations(tmp_path: Path):
+    """#4 (r8): verify_run checked only top-level container TYPES; nested malformations passed as
+    verified and crashed the app. Each hash-consistent-but-invalid shape must fail closed."""
+    valid = {"kpi_findings": [], "forecast": {}, "recommendations": []}
+    cases = {
+        "kf_not_object": {**valid, "kpi_findings": ["not-an-object"]},
+        "kf_missing_severity": {**valid, "kpi_findings": [{"kpi": "x"}]},
+        "rec_not_object": {**valid, "recommendations": ["not-an-object"]},
+        "rec_missing_text": {**valid, "recommendations": [{"kpi": "x", "capa_frame": "C", "review_status": "P", "disclaimer": "d"}]},
+        "forecast_only_h30": {**valid, "forecast": {"daily_enrollment": {"h30": {"yhat": 1, "lower": 0, "upper": 2}}}},
+        "generated_at_numeric": {**valid, "generated_at": 123},
+    }
+    for name, findings in cases.items():
+        ok, reason = data.verify_run(_seal_run(tmp_path / name, findings))
+        assert ok is False, name
+
+
+def test_load_history_survives_non_string_generated_at(tmp_path: Path):
+    """#4 (r8): a historical run with a numeric generated_at crashed the sort (int vs str)."""
+    runs = _seed_two_runs(tmp_path)
+    run_dirs = sorted(p for p in runs.iterdir() if p.is_dir() and p.name != "latest")
+    fj = json.loads((run_dirs[0] / "findings.json").read_text()); fj["generated_at"] = 123
+    (run_dirs[0] / "findings.json").write_text(json.dumps(fj))
+    hist = data.load_history(runs)                          # must not raise on mixed types
+    assert len(hist) == 2
 
 
 def test_verify_run_requires_lineage_fields(tmp_path: Path):

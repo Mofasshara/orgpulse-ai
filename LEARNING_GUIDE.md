@@ -416,5 +416,6 @@ money. This system watches continuously, warns early with a forecast of where
 things are heading, and tells the team what to consider doing — always as advice a
 qualified person must approve, never an automated decision. It's designed from the
 ground up for a regulated environment: every suggestion is recorded in a
-tamper-evident log and can be fully reconstructed for an auditor, in line with the
-EU AI Act's rules for high-risk AI."
+tamper-evident log with its full input lineage, so an auditor can trace it and — for
+the deterministic offline runs — reproduce it exactly, in line with the EU AI Act's
+rules for high-risk AI."

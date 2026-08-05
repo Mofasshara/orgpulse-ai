@@ -158,6 +158,26 @@ def test_duplicate_clinical_records_are_data_quality():
     assert hero.severity == "DATA_QUALITY"
 
 
+def test_numeric_string_enrollment_aggregates_numerically_not_concatenated():
+    """Critical (r8): a string-dtype enrollment column was summed by CONCATENATION ("1"x8 ->
+    "11111111"), a wrong-dtype fail-open. It must aggregate the coerced numbers (-> 8.0), and a
+    non-numeric string must be DATA_QUALITY."""
+    import numpy as np
+    from datetime import date
+    from orgpulse.generators.clinical import generate_clinical
+    from orgpulse.pipeline.nodes import validated_clinical_daily
+
+    base = generate_clinical(date(2026, 1, 1), 200, make_rng(42))
+    y = validated_clinical_daily(base.assign(daily_enrollment="1"))["y"].to_numpy()
+    assert set(np.unique(y)) == {8.0}                       # 8 sites x 1, numerically summed
+    hero = next(f for f in detect_node({"clinical": base.assign(daily_enrollment="1")})["kpi_findings"]
+                if f.kpi == "daily_enrollment")
+    assert hero.latest_value == 8.0                          # not 11111111.0
+    bad = next(f.severity for f in detect_node({"clinical": base.assign(daily_enrollment="abc")})["kpi_findings"]
+               if f.kpi == "daily_enrollment")
+    assert bad == "DATA_QUALITY"
+
+
 def test_recommendation_node_survives_malformed_llm_output():
     """Self-review: the online LLM path isn't runtime-schema-guaranteed. A malformed recommend()
     response must not crash the governed pipeline — malformed items are skipped, the alert still
@@ -167,14 +187,19 @@ def test_recommendation_node_survives_malformed_llm_output():
     class BadLLM:
         def analyze(self, system, prompt): return "x"
         def recommend(self, system, prompt, kpis):
-            return [{"kpi": "daily_enrollment"},              # missing text/capa_frame
+            return [{"kpi": "daily_enrollment"},                       # missing text/capa_frame
                     "not-a-dict",
-                    {"kpi": "pass_rate", "text": "t", "capa_frame": "CAPA-001"}]  # valid
+                    {"kpi": "invented", "text": "t", "capa_frame": "CAPA-001"},   # not a requested KPI
+                    {"kpi": "daily_enrollment", "text": None, "capa_frame": 7},   # malformed values
+                    {"kpi": "daily_enrollment", "text": "real", "capa_frame": "CAPA-002"}]  # valid
 
+    # overall CRITICAL with no findings -> hero fallback makes daily_enrollment the requested KPI
     state = {"kpi_findings": [], "overall_severity": "CRITICAL", "forecast": {}}
     out = recommendation_node(state, BadLLM())              # must not raise
     assert out["alert"] is True
-    assert [r.kpi for r in out["recommendations"]] == ["pass_rate"]  # only the valid one
+    assert len(out["recommendations"]) == 1                 # only the well-formed, requested item
+    assert out["recommendations"][0].kpi == "daily_enrollment"
+    assert out["recommendations"][0].text == "real"
 
 
 def test_forecast_uses_the_same_gate_as_detection():
