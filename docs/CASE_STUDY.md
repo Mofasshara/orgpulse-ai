@@ -74,7 +74,7 @@ prediction. The anomaly detector gets the same treatment: CUSUM thresholds are c
 documented ~1% in-control false-alarm rate *per window length* via a Monte-Carlo table, with a
 ≥60-sample baseline floor.
 
-That discipline was enforced, not assumed. The codebase went through **six rounds of external
+That discipline was enforced, not assumed. The codebase went through **seven rounds of external
 adversarial review**, each of which found real defects — inert data corruptions, tests that
 fired on the wrong signal, false-alarm calibration that collapsed on short baselines, fail-open
 SAFE paths, and impossible-value gaps — the last of which forced a root-cause redesign rather than
@@ -103,6 +103,6 @@ the root (decouple the baseline window from the detection window), locked with a
 | Data streams | 3 (clinical hero + QC + supply) |
 | Analysis DAG | 4 nodes (LangGraph) |
 | Forecast horizons | 30 / 60 / 90 days, 90% in-sample-calibrated interval |
-| Tests | 145, keyless & offline |
-| External adversarial review rounds | 6 (all findings fixed & reproduction-verified; round 5 forced a redesign) |
+| Tests | 152, keyless & offline |
+| External adversarial review rounds | 7 (all findings fixed & reproduction-verified; round 5 forced a redesign) |
 | Deployed dashboard deps | 3 (`streamlit`, `pandas`, `plotly`) |
