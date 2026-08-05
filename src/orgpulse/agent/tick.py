@@ -17,24 +17,38 @@ from orgpulse.detect.validation import kpi_series_reason
 from orgpulse.detect.orchestrator import overall_severity
 from orgpulse.detect.types import Severity
 from orgpulse.detect.zscore import zscore_detect
-from orgpulse.forecast.prophet_forecaster import series_from_generator
 from orgpulse.generators.clinical import generate_clinical
 from orgpulse.generators.qc import generate_qc
 from orgpulse.generators.supply import generate_supply
 from orgpulse.governance.audit import HashChainedAuditLog
 from orgpulse.pipeline.graph import render_report
 from orgpulse.pipeline.llm import make_llm
-from orgpulse.pipeline.nodes import analyst_node, forecast_node, recommendation_node
+from orgpulse.pipeline.nodes import analyst_node, forecast_node, recommendation_node, validated_clinical_daily
 from orgpulse.pipeline.state import Findings, KpiFinding, data_quality_finding
 
 
-def _kpi_series(clinical, qc, supply) -> list[tuple[str, np.ndarray]]:
-    return [
-        ("daily_enrollment", series_from_generator(clinical, "date", "daily_enrollment")["y"].to_numpy()),
-        ("pass_rate", qc["pass_rate"].to_numpy()),
-        ("calibration_offset", qc["calibration_offset"].to_numpy()),
-        ("lead_time_days", supply["lead_time_days"].to_numpy()),
-    ]
+def _kpi_series(clinical, qc, supply) -> list[tuple[str, "np.ndarray | None", "str | None"]]:
+    """Extract each KPI series for the tick, returning (kpi, array, structural_reason).
+
+    The clinical series goes through the SAME validated builder detection uses — so per-site
+    corruption that the daily sum would mask (a negative site total hidden inside a positive
+    aggregate), duplicate rows, NaT dates, and non-integer counts are caught here too. A
+    structural failure yields a DATA_QUALITY reason instead of an array; a missing/broken
+    column likewise. This keeps the autonomous tick and the `run` pipeline on one gate.
+    """
+    out: list[tuple[str, np.ndarray | None, str | None]] = []
+    try:
+        out.append(("daily_enrollment", validated_clinical_daily(clinical)["y"].to_numpy(), None))
+    except (KeyError, ValueError, TypeError) as exc:
+        out.append(("daily_enrollment", None, f"unusable clinical input ({exc})"))
+    for kpi, df, col in (("pass_rate", qc, "pass_rate"),
+                         ("calibration_offset", qc, "calibration_offset"),
+                         ("lead_time_days", supply, "lead_time_days")):
+        try:
+            out.append((kpi, df[col].to_numpy(), None))
+        except (KeyError, TypeError) as exc:
+            out.append((kpi, None, f"unusable input ({exc})"))
+    return out
 
 
 def run_tick(
@@ -94,7 +108,11 @@ def run_tick(
     new_baselines = {}
     used_bootstrap = False
 
-    for kpi, series in _kpi_series(clinical, qc, supply):
+    for kpi, series, structural_reason in _kpi_series(clinical, qc, supply):
+        # A structural failure (unusable clinical rows / missing column) is DATA_QUALITY.
+        if structural_reason is not None:
+            findings.append(data_quality_finding(kpi, structural_reason))
+            continue
         # Validate the WHOLE ingested series through the shared gate (numeric, 1-D, >= the
         # detection window, all-finite, in-domain). A violation ANYWHERE — including in the
         # baseline history, not just the current window — is DATA_QUALITY, and NO baseline is

@@ -209,8 +209,11 @@ def analyst_node(state: PipelineState, llm: LLMClient) -> dict:
         prompt_lines.append(f"- {f.kpi} ({f.severity}): {f.detail} [latest={f.latest_value}]")
 
     prompt_lines.append("\nForecast (hero KPI daily_enrollment):")
-    if "daily_enrollment" in forecast:
-        for horizon, data in forecast["daily_enrollment"].items():
+    hero_fc = forecast.get("daily_enrollment", {})
+    horizons = [h for h in ("h30", "h60", "h90") if h in hero_fc]  # skip the `calibration` meta key
+    if horizons:
+        for horizon in horizons:
+            data = hero_fc[horizon]
             yhat = data.get("yhat", "N/A")
             lower = data.get("lower", "N/A")
             upper = data.get("upper", "N/A")
@@ -267,12 +270,18 @@ def recommendation_node(state: PipelineState, llm: LLMClient) -> dict:
         prompt = "\n".join(prompt_lines)
 
         rec_dicts = llm.recommend("You are a quality assurance CAPA expert.", prompt, kpis=anomaly_kpis)
-        for rec_dict in rec_dicts:
+        for rec_dict in rec_dicts if isinstance(rec_dicts, list) else []:
+            # Be defensive about the LLM's output shape (the online Claude path is not
+            # schema-guaranteed at runtime): a malformed item is skipped rather than crashing
+            # the governed pipeline with a KeyError. The anomaly still surfaces via the finding
+            # and the alert (which fire on overall_severity, not on rec presence).
+            if not (isinstance(rec_dict, dict) and {"kpi", "text", "capa_frame"} <= rec_dict.keys()):
+                continue
             recommendations.append(
                 Recommendation(
-                    kpi=rec_dict["kpi"],
-                    text=rec_dict["text"],
-                    capa_frame=rec_dict["capa_frame"],
+                    kpi=str(rec_dict["kpi"]),
+                    text=str(rec_dict["text"]),
+                    capa_frame=str(rec_dict["capa_frame"]),
                     disclaimer=HUMAN_OVERSIGHT_DISCLAIMER,
                     review_status="PENDING_HUMAN_REVIEW",
                 )

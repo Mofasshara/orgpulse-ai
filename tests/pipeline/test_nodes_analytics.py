@@ -158,6 +158,25 @@ def test_duplicate_clinical_records_are_data_quality():
     assert hero.severity == "DATA_QUALITY"
 
 
+def test_recommendation_node_survives_malformed_llm_output():
+    """Self-review: the online LLM path isn't runtime-schema-guaranteed. A malformed recommend()
+    response must not crash the governed pipeline — malformed items are skipped, the alert still
+    fires on overall_severity, and valid items still come through."""
+    from orgpulse.pipeline.nodes import recommendation_node
+
+    class BadLLM:
+        def analyze(self, system, prompt): return "x"
+        def recommend(self, system, prompt, kpis):
+            return [{"kpi": "daily_enrollment"},              # missing text/capa_frame
+                    "not-a-dict",
+                    {"kpi": "pass_rate", "text": "t", "capa_frame": "CAPA-001"}]  # valid
+
+    state = {"kpi_findings": [], "overall_severity": "CRITICAL", "forecast": {}}
+    out = recommendation_node(state, BadLLM())              # must not raise
+    assert out["alert"] is True
+    assert [r.kpi for r in out["recommendations"]] == ["pass_rate"]  # only the valid one
+
+
 def test_forecast_uses_the_same_gate_as_detection():
     """#1 (r7): forecasting must NOT publish a numeric forecast for a hero series detection rules
     DATA_QUALITY — per-site negative (masked by the sum), NaT date, non-integer count, duplicate."""

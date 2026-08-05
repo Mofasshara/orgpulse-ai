@@ -122,6 +122,30 @@ def test_tick_audit_records_remembered_baseline_lineage(tmp_path):
     assert b_lo != b_hi            # ...but different remembered baseline IS in the lineage
 
 
+def test_tick_catches_per_site_clinical_corruption_masked_by_aggregation(tmp_path, monkeypatch):
+    """Self-review finding: the AUTONOMOUS tick built its clinical series with the raw
+    aggregator (not the validated builder detection uses), so per-site corruption that the
+    daily sum hides — a negative site total inside a positive aggregate, duplicate rows, NaT
+    dates — read SAFE in the scheduled agent. It must be DATA_QUALITY, like the `run` path."""
+    import numpy as np
+    import pandas as pd
+    from orgpulse.agent import tick as tickmod
+
+    orig = tickmod.generate_clinical
+    cases = {
+        "per_site_negative": lambda df: df.assign(
+            daily_enrollment=np.where(df.site_id == 0, -1, 1)),           # aggregate stays positive
+        "nat_date": lambda df: df.assign(date=df["date"].mask(df.index == 0)),
+        "duplicate": lambda df: pd.concat([df, df.iloc[[0]]], ignore_index=True),
+    }
+    for name, mut in cases.items():
+        monkeypatch.setattr(tickmod, "generate_clinical", lambda *a, _m=mut, **k: _m(orig(*a, **k).copy()))
+        f = run_tick(BaselineMemory(tmp_path / f"m_{name}.json"), 0, out_root=tmp_path / f"r_{name}",
+                     now="2026-08-04T07:00:00", offline=True)
+        sev = {k.kpi: k.severity for k in f.kpi_findings}["daily_enrollment"]
+        assert sev == "DATA_QUALITY", name
+
+
 def test_tick_rejects_domain_violation_in_baseline_history_and_saves_no_baseline(tmp_path, monkeypatch):
     """#3 (r7): a domain violation anywhere in the ingested stream — including old baseline
     history, not just the current window — must be DATA_QUALITY, and no baseline may be
