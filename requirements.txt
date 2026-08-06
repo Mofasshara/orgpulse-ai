@@ -1,0 +1,7 @@
+# Root requirements for Streamlit Community Cloud (the presentation plane).
+# Streamlit Cloud prioritizes requirements.txt over pyproject.toml, so this pins the deploy
+# to the LIGHTWEIGHT split-plane stack — it must NOT pull in the compute plane (numpy/
+# scikit-learn/Prophet/LangGraph/anthropic). The dashboard only reads committed run artifacts.
+streamlit>=1.50
+pandas>=2.2
+plotly>=5.20
