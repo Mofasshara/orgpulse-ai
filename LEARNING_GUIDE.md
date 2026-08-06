@@ -67,7 +67,7 @@ high-risk + GxP bar.*
                           ┌──────────────────────────────────────┐
                           │ STREAMLIT dashboard (the shop window) │
                           │ reads runs/latest, renders it,        │
-                          │ deploy-ready (not yet deployed)       │
+                          │ deployed to Streamlit Community Cloud │
                           └──────────────────────────────────────┘
 ```
 

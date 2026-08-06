@@ -29,8 +29,7 @@ The system splits into two planes that share nothing but a directory of committe
 
 That split was the highest-leverage decision in the project. Because the dashboard never
 imports the compute stack, it deploys to Streamlit Cloud with three dependencies
-(`streamlit`, `pandas`, `plotly`), holds no API key, and is **always-populated** (once
-deployed) — it renders
+(`streamlit`, `pandas`, `plotly`), holds no API key, and is **always-populated** — it renders
 committed results, so there's nothing to spin up and nothing to fail on first load. The agent's
 autonomy lives entirely on the compute plane; the public surface is a pure, cheap view.
 

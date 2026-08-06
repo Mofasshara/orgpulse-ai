@@ -18,7 +18,7 @@ itself *and* is safe to run where regulators are watching.
 
 ## See it
 
-- **Live dashboard:** _not yet deployed — deploy-ready; add your Streamlit Cloud URL here_
+- **Live dashboard:** **https://orgpulse-ai-pir6spmdmkrqmtcmam8jyp.streamlit.app/**
 - **Case study (the story + honest results):** [docs/CASE_STUDY.md](docs/CASE_STUDY.md)
 - **Architecture + diagram:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - **EU AI Act self-classification:** [docs/EU_AI_ACT_SELF_CLASSIFICATION.md](docs/EU_AI_ACT_SELF_CLASSIFICATION.md)
@@ -109,7 +109,7 @@ Anthropic Claude (reasoning, optional) · Hermes (autonomy/scheduling) · Stream
 | `src/orgpulse/agent/` | Cross-run baseline memory + the autonomous `run_tick` loop |
 | `hermes/` | 3× domain `SKILL.md` + cron runbook (split-plane) |
 | `streamlit_app/` | Self-contained dashboard (reads `runs/`, no heavy deps) |
-| `runs/` | Committed demo run history (so the dashboard is populated on first load once deployed) |
+| `runs/` | Committed demo run history (so the deployed dashboard is populated on first load) |
 | `docs/` | Architecture, case study, EU AI Act classification, specs & plans |
 
 ## Tests
