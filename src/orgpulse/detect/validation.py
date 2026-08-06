@@ -59,13 +59,14 @@ KPI_DOMAINS: dict[str, tuple[float | None, float | None]] = {
 }
 
 
-def kpi_domain_reason(kpi: str, arr: np.ndarray) -> str | None:
+def kpi_domain_reason(kpi: str, arr: np.ndarray, bounds: dict | None = None) -> str | None:
     """Return a DATA_QUALITY reason if any value violates the KPI's domain, else None.
-    Assumes `arr` is already finite (call after the finite check)."""
-    bounds = KPI_DOMAINS.get(kpi)
-    if bounds is None:
+    Assumes `arr` is already finite (call after the finite check). ``bounds`` is the active
+    domain's {kpi: (lo, hi)} map; defaults to the pharma KPI_DOMAINS for backward compatibility."""
+    kpi_bounds = (bounds if bounds is not None else KPI_DOMAINS).get(kpi)
+    if kpi_bounds is None:
         return None
-    lo, hi = bounds
+    lo, hi = kpi_bounds
     a = np.asarray(arr, dtype=float)
     if lo is not None and np.any(a < lo):
         return f"value below domain minimum {lo} for {kpi}"
@@ -74,7 +75,7 @@ def kpi_domain_reason(kpi: str, arr: np.ndarray) -> str | None:
     return None
 
 
-def baseline_domain_feasible(kpi: str, mean, std) -> bool:
+def baseline_domain_feasible(kpi: str, mean, std, bounds: dict | None = None) -> bool:
     """Is a REMEMBERED baseline physically consistent with the KPI, beyond finite mean/std?
     The baseline drives detection, so a corrupt one (loaded from a writable file) must be
     rejected: its mean must be in-domain, and for a bounded KPI its std cannot exceed the
@@ -82,15 +83,15 @@ def baseline_domain_feasible(kpi: str, mean, std) -> bool:
     z-score to ~0, making everything read SAFE)."""
     if not (is_finite_scalar(mean) and is_finite_scalar(std)):
         return False
-    if kpi_domain_reason(kpi, np.asarray([float(mean)])) is not None:
+    if kpi_domain_reason(kpi, np.asarray([float(mean)]), bounds) is not None:
         return False
-    lo, hi = KPI_DOMAINS.get(kpi, (None, None))
+    lo, hi = (bounds if bounds is not None else KPI_DOMAINS).get(kpi, (None, None))
     if lo is not None and hi is not None and float(std) > (hi - lo):
         return False
     return True
 
 
-def kpi_series_reason(kpi: str, series, *, min_len: int | None = None) -> str | None:
+def kpi_series_reason(kpi: str, series, *, min_len: int | None = None, bounds: dict | None = None) -> str | None:
     """THE single "is this KPI series usable?" check, shared by every consumer (detection,
     forecasting, the tick). Returns a DATA_QUALITY reason or None. Checks: numeric &
     convertible, 1-D, optional minimum length, all-finite, and in-domain. Centralizing this
@@ -107,4 +108,4 @@ def kpi_series_reason(kpi: str, series, *, min_len: int | None = None) -> str | 
         return f"insufficient data ({len(a)} points < {min_len} required) for {kpi}"
     if a.size == 0 or not np.isfinite(a).all():
         return f"non-finite values (NaN/inf) for {kpi}"
-    return kpi_domain_reason(kpi, a)
+    return kpi_domain_reason(kpi, a, bounds)
