@@ -8,9 +8,17 @@ import pandas as pd
 
 from orgpulse.detect.orchestrator import detect_kpi, overall_severity
 from orgpulse.detect.types import Severity
-from orgpulse.detect.validation import kpi_domain_reason, kpi_series_reason
+from orgpulse.detect.validation import MIN_ASSESSMENT_DAYS, kpi_domain_reason, kpi_series_reason
 from orgpulse.forecast.calibration import interval_calibration
 from orgpulse.forecast.prophet_forecaster import forecast_kpi, series_from_generator
+from orgpulse.pipeline.llm import LLMClient
+from orgpulse.pipeline.state import (
+    HUMAN_OVERSIGHT_DISCLAIMER,
+    KpiFinding,
+    PipelineState,
+    Recommendation,
+    data_quality_finding,
+)
 
 
 def validated_clinical_daily(df: pd.DataFrame) -> pd.DataFrame:
@@ -40,14 +48,6 @@ def validated_clinical_daily(df: pd.DataFrame) -> pd.DataFrame:
     if ((present < 0) | (present != present.round())).any():
         raise ValueError("impossible per-site enrollment (negative or non-integer count)")
     return series_from_generator(df.assign(daily_enrollment=coerced), "date", "daily_enrollment")
-from orgpulse.pipeline.llm import LLMClient
-from orgpulse.pipeline.state import (
-    HUMAN_OVERSIGHT_DISCLAIMER,
-    KpiFinding,
-    PipelineState,
-    Recommendation,
-    data_quality_finding,
-)
 
 
 class DetectNodeOutput(TypedDict):
@@ -71,7 +71,7 @@ def _kpi_finding(kpi: str, series) -> KpiFinding:
     - a series shorter than 120 points, non-1-D, non-numeric, non-finite, or with any value
       outside the KPI's real-world domain becomes DATA_QUALITY (never silently skipped).
     """
-    reason = kpi_series_reason(kpi, series, min_len=120)  # 1-D, numeric, >=120, finite, in-domain
+    reason = kpi_series_reason(kpi, series, min_len=MIN_ASSESSMENT_DAYS)  # 1-D, numeric, finite, in-domain, >= shared minimum
     if reason is not None:
         return data_quality_finding(kpi, reason)
     s = np.asarray(series, dtype=float)
@@ -159,7 +159,7 @@ def forecast_node(state: PipelineState) -> ForecastNodeOutput:
             y = daily_df["y"].to_numpy(dtype=float)
         except (KeyError, ValueError, TypeError):
             return {"forecast": forecast_result}
-        if kpi_series_reason("daily_enrollment", y, min_len=120) is not None:
+        if kpi_series_reason("daily_enrollment", y, min_len=MIN_ASSESSMENT_DAYS) is not None:
             return {"forecast": forecast_result}
 
         # Forecast at horizons 30, 60, 90

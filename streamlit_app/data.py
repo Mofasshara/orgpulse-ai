@@ -14,9 +14,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from pathlib import Path
 
 _GENESIS = "0" * 64
+_SEVERITIES = {"SAFE", "WARNING", "CRITICAL", "DATA_QUALITY"}
 
 
 def _sha256(text: str) -> str:
@@ -101,7 +103,9 @@ def verify_audit(audit_path: str | Path) -> bool:
 
 
 def _is_num(x) -> bool:
-    return isinstance(x, (int, float)) and not isinstance(x, bool)
+    # A FINITE real number — NaN/Inf are rejected (the dashboard formats these values and a
+    # NaN/Inf would render as garbage or, for a bad forecast bound, plot nonsensically).
+    return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
 
 
 def _findings_schema_reason(fj: dict) -> str | None:
@@ -109,17 +113,23 @@ def _findings_schema_reason(fj: dict) -> str | None:
     container types. A hash-consistent but structurally invalid findings (a kpi_finding
     missing `severity`, a forecast with only `h30`, a numeric `generated_at`, a recommendation
     missing `text`) must fail closed here, before the app indexes into it and crashes."""
-    for f in ("run_id", "generated_at", "overall_severity"):
+    for f in ("run_id", "generated_at"):
         if not isinstance(fj.get(f), str):
             return f"{f} is not a string"
+    if fj.get("overall_severity") not in _SEVERITIES:
+        return "overall_severity is not a known severity"
+    if "alert" in fj and not isinstance(fj["alert"], bool):
+        return "alert is not a boolean"
     kfs = fj.get("kpi_findings", [])
     if not isinstance(kfs, list):
         return "kpi_findings is not a list"
     for k in kfs:
-        if not isinstance(k, dict) or not all(isinstance(k.get(x), str) for x in ("kpi", "severity", "detail")):
-            return "a kpi_finding is not an object with kpi/severity/detail strings"
+        if not isinstance(k, dict) or not all(isinstance(k.get(x), str) for x in ("kpi", "detail")):
+            return "a kpi_finding is not an object with kpi/detail strings"
+        if k.get("severity") not in _SEVERITIES:
+            return "a kpi_finding severity is not a known severity"
         if not (k.get("latest_value") is None or _is_num(k.get("latest_value"))):
-            return "a kpi_finding latest_value is not a number or null"
+            return "a kpi_finding latest_value is not a finite number or null"
     fc = fj.get("forecast", {})
     if not isinstance(fc, dict):
         return "forecast is not an object"
@@ -130,7 +140,17 @@ def _findings_schema_reason(fj: dict) -> str | None:
         for h in ("h30", "h60", "h90"):  # the dashboard requires all three when a forecast is present
             hh = hero.get(h)
             if not isinstance(hh, dict) or not all(_is_num(hh.get(b)) for b in ("yhat", "lower", "upper")):
-                return f"forecast.{h} missing numeric yhat/lower/upper"
+                return f"forecast.{h} missing finite yhat/lower/upper"
+        # The dashboard dereferences and FORMATS the calibration block — validate it too.
+        cal = hero.get("calibration")
+        if cal is not None:
+            if not isinstance(cal, dict) or not isinstance(cal.get("applied"), bool):
+                return "forecast calibration is malformed (applied not boolean)"
+            if cal.get("applied") and not _is_num(cal.get("scale_factor")):
+                return "forecast calibration scale_factor is not a finite number"
+            rc = cal.get("raw_coverage")
+            if not (rc is None or _is_num(rc)):
+                return "forecast calibration raw_coverage is not a finite number or null"
     recs = fj.get("recommendations", [])
     if not isinstance(recs, list):
         return "recommendations is not a list"

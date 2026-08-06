@@ -224,6 +224,18 @@ def test_verify_run_rejects_nested_schema_malformations(tmp_path: Path):
         "rec_missing_text": {**valid, "recommendations": [{"kpi": "x", "capa_frame": "C", "review_status": "P", "disclaimer": "d"}]},
         "forecast_only_h30": {**valid, "forecast": {"daily_enrollment": {"h30": {"yhat": 1, "lower": 0, "upper": 2}}}},
         "generated_at_numeric": {**valid, "generated_at": 123},
+        # r9 #3: non-finite numbers, malformed calibration, bad enum / boolean
+        "nan_latest_value": {**valid, "kpi_findings": [{"kpi": "x", "severity": "SAFE", "detail": "d", "latest_value": float("nan")}]},
+        "unknown_severity": {**valid, "kpi_findings": [{"kpi": "x", "severity": "BANANA", "detail": "d", "latest_value": None}]},
+        "alert_not_bool": {**valid, "alert": "yes"},
+        "calibration_string": {**valid, "forecast": {"daily_enrollment": {
+            "calibration": "bad",
+            "h30": {"yhat": 1, "lower": 0, "upper": 2}, "h60": {"yhat": 1, "lower": 0, "upper": 2}, "h90": {"yhat": 1, "lower": 0, "upper": 2}}}},
+        "calibration_bad_scale": {**valid, "forecast": {"daily_enrollment": {
+            "calibration": {"applied": True, "scale_factor": "bad"},
+            "h30": {"yhat": 1, "lower": 0, "upper": 2}, "h60": {"yhat": 1, "lower": 0, "upper": 2}, "h90": {"yhat": 1, "lower": 0, "upper": 2}}}},
+        "inf_yhat": {**valid, "forecast": {"daily_enrollment": {
+            "h30": {"yhat": float("inf"), "lower": 0, "upper": 2}, "h60": {"yhat": 1, "lower": 0, "upper": 2}, "h90": {"yhat": 1, "lower": 0, "upper": 2}}}},
     }
     for name, findings in cases.items():
         ok, reason = data.verify_run(_seal_run(tmp_path / name, findings))

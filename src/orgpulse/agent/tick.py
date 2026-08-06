@@ -13,7 +13,11 @@ from orgpulse.agent.baseline_memory import BaselineMemory
 from orgpulse.config import make_rng
 from orgpulse.detect.baseline import fit_baseline
 from orgpulse.detect.cusum import _MIN_BASELINE_N, cusum_detect
-from orgpulse.detect.validation import kpi_domain_reason, kpi_series_reason
+from orgpulse.detect.validation import (
+    MIN_ASSESSMENT_DAYS,
+    baseline_domain_feasible,
+    kpi_series_reason,
+)
 from orgpulse.detect.orchestrator import overall_severity
 from orgpulse.detect.types import Severity
 from orgpulse.detect.zscore import zscore_detect
@@ -88,10 +92,10 @@ def run_tick(
         raise ValueError(f"tick_number must be >= 0, got {tick_number}")
     if days_per_period <= 0:
         raise ValueError(f"days_per_period must be > 0, got {days_per_period}")
-    if baseline_days < _MIN_BASELINE_N:
+    if baseline_days < MIN_ASSESSMENT_DAYS:
         raise ValueError(
-            f"baseline_days must be >= {_MIN_BASELINE_N} (the CUSUM calibration floor), "
-            f"got {baseline_days}"
+            f"baseline_days must be >= {MIN_ASSESSMENT_DAYS} (the shared minimum-history contract; "
+            f"the run pipeline needs the same 120 to make an assessment), got {baseline_days}"
         )
     if base_days < max(baseline_days, days_per_period):
         raise ValueError(
@@ -137,10 +141,14 @@ def run_tick(
         current = s[-n:]
         prior = remembered.get(kpi)
         # The remembered baseline DRIVES detection and is loaded from a writable file, so a
-        # corrupt/impossible baseline (e.g. a pass_rate mean of 1.1) must not silently produce
-        # SAFE — validate its mean against the KPI domain before trusting it.
-        if prior is not None and kpi_domain_reason(kpi, np.asarray([prior.mean])) is not None:
-            findings.append(data_quality_finding(kpi, "remembered baseline mean out of domain (corrupt memory)"))
+        # corrupt/impossible baseline must not silently produce SAFE. Reject it if its mean is
+        # out of domain, its std is infeasible for a bounded KPI (e.g. std=100 for pass_rate,
+        # which flattens every z-score toward 0), or its sample count doesn't match the window
+        # it claims to summarise (a legitimate save always has n == baseline_days).
+        if prior is not None and (
+            not baseline_domain_feasible(kpi, prior.mean, prior.std) or prior.n != baseline_days
+        ):
+            findings.append(data_quality_finding(kpi, "remembered baseline is corrupt/implausible (memory)"))
             continue
         if prior is not None:
             results = [

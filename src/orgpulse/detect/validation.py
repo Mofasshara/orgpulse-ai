@@ -2,6 +2,12 @@ from __future__ import annotations
 
 import numpy as np
 
+# The single minimum history any entry point needs to produce a non-DATA_QUALITY assessment
+# (detect_kpi uses >=90 baseline + 30 recent). BOTH the run pipeline and the autonomous tick
+# enforce this same floor so identical-length inputs can never diverge (run DATA_QUALITY vs
+# tick SAFE). One constant, one contract.
+MIN_ASSESSMENT_DAYS: int = 120
+
 
 def ensure_1d_finite(values, name: str) -> np.ndarray:
     arr = np.asarray(values, dtype=float)
@@ -66,6 +72,22 @@ def kpi_domain_reason(kpi: str, arr: np.ndarray) -> str | None:
     if hi is not None and np.any(a > hi):
         return f"value above domain maximum {hi} for {kpi}"
     return None
+
+
+def baseline_domain_feasible(kpi: str, mean, std) -> bool:
+    """Is a REMEMBERED baseline physically consistent with the KPI, beyond finite mean/std?
+    The baseline drives detection, so a corrupt one (loaded from a writable file) must be
+    rejected: its mean must be in-domain, and for a bounded KPI its std cannot exceed the
+    domain width (a std of 100 for a value in [0,1] is impossible and would flatten every
+    z-score to ~0, making everything read SAFE)."""
+    if not (is_finite_scalar(mean) and is_finite_scalar(std)):
+        return False
+    if kpi_domain_reason(kpi, np.asarray([float(mean)])) is not None:
+        return False
+    lo, hi = KPI_DOMAINS.get(kpi, (None, None))
+    if lo is not None and hi is not None and float(std) > (hi - lo):
+        return False
+    return True
 
 
 def kpi_series_reason(kpi: str, series, *, min_len: int | None = None) -> str | None:

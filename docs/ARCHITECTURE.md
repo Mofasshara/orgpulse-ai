@@ -86,7 +86,8 @@ Each tick detects the **recent period** (30 days) against the **established base
 back. The baseline window is deliberately longer than the detection window so CUSUM's
 false-alarm calibration (which needs ≥60 samples) always holds — otherwise every
 post-bootstrap tick would degrade to `DATA_QUALITY`. `run_tick` validates these
-preconditions at entry (`baseline_days ≥ 60`, `base_days ≥ max(60, days_per_period)`) and
+preconditions at entry (`baseline_days ≥ 120` — the shared minimum-history contract both the
+run pipeline and the tick enforce — and `base_days ≥ max(baseline_days, days_per_period)`) and
 never persists a baseline below the 60-sample floor.
 
 **What "remembered" means (and doesn't).** The agent remembers baseline **statistics**

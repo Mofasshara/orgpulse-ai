@@ -54,6 +54,8 @@ def test_tick1_uses_remembered_baseline(tmp_path):
         {"base_days": 30, "days_per_period": 30},    # base_days below floor
         {"base_days": 60, "days_per_period": 90},    # detection window longer than history
         {"days_per_period": 0},                      # non-positive period
+        {"baseline_days": 60, "base_days": 60},      # r9 #1: below the shared 120-history contract
+        {"baseline_days": 100},                      # r9 #1: still below the 120 minimum
     ],
 )
 def test_run_tick_rejects_unsafe_params_instead_of_degrading(tmp_path, kwargs):
@@ -172,6 +174,27 @@ def test_tick_rejects_out_of_domain_remembered_baseline(tmp_path):
     f = run_tick(mem, 1, out_root=tmp_path / "runs", now="2026-01-01T00:00:00", offline=True)
     assert {k.kpi: k.severity for k in f.kpi_findings}["pass_rate"] == "DATA_QUALITY"
     assert f.overall_severity == "DATA_QUALITY"
+
+
+@pytest.mark.parametrize(
+    "bad_baseline",
+    [
+        ("std=100", 0.5, 100.0, 120),   # r9 #2: std infeasible for pass_rate in [0,1]
+        ("n_mismatch_121", 0.5, 0.05, 121),   # r9 #2: n != baseline_days (default 120)
+        ("n_billion", 0.5, 0.05, 10**9),      # r9 #2: absurd n
+    ],
+)
+def test_tick_rejects_infeasible_remembered_baseline_std_or_n(tmp_path, bad_baseline):
+    """#2 (r9): mean-in-domain isn't enough — a bounded KPI's std can't exceed the domain
+    width (std=100 flattens z-scores to ~0 -> SAFE), and n must match the window it summarises."""
+    from orgpulse.detect.baseline import Baseline
+
+    _, mean, std, n = bad_baseline
+    mem = BaselineMemory(tmp_path / "m.json")
+    mem.save({k: Baseline(mean=mean, std=std, n=n)
+              for k in ("daily_enrollment", "pass_rate", "calibration_offset", "lead_time_days")})
+    f = run_tick(mem, 1, out_root=tmp_path / "runs", now="2026-01-01T00:00:00", offline=True)
+    assert {k.kpi: k.severity for k in f.kpi_findings}["pass_rate"] == "DATA_QUALITY"
 
 
 def test_tick_rejects_domain_violation_in_baseline_history_and_saves_no_baseline(tmp_path, monkeypatch):
