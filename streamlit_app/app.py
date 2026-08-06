@@ -11,11 +11,20 @@ Override run source: env ``ORGPULSE_RUNS`` (defaults to ``./runs``).
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+
+# `streamlit run streamlit_app/app.py` puts THIS file's folder on sys.path, not the repo root,
+# so the `streamlit_app` package isn't importable on Streamlit Cloud. Add the repo root (the
+# parent of this folder) so `from streamlit_app import data` resolves. This does NOT put `src/`
+# on the path, so `orgpulse` stays un-importable — the split plane is preserved.
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 from streamlit_app import data
 
