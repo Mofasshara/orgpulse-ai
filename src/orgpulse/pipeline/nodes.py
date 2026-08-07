@@ -209,8 +209,9 @@ def analyst_node(state: PipelineState, llm: LLMClient, domain: Domain = PHARMA) 
     for f in findings:
         prompt_lines.append(f"- {f.kpi} ({f.severity}): {f.detail} [latest={f.latest_value}]")
 
-    prompt_lines.append("\nForecast (hero KPI daily_enrollment):")
-    hero_fc = forecast.get("daily_enrollment", {})
+    hero = domain.hero()
+    prompt_lines.append(f"\nForecast (hero KPI {hero}):")
+    hero_fc = forecast.get(hero, {})
     horizons = [h for h in ("h30", "h60", "h90") if h in hero_fc]  # skip the `calibration` meta key
     if horizons:
         for horizon in horizons:
@@ -257,9 +258,9 @@ def recommendation_node(state: PipelineState, llm: LLMClient, domain: Domain = P
     # it is a genuinely calm run and the hero gets a routine CAPA-style review rec.
     if not anomaly_kpis and not dq_kpis:
         if overall_severity == "DATA_QUALITY":
-            dq_kpis = ["daily_enrollment"]
+            dq_kpis = [domain.hero()]
         else:
-            anomaly_kpis = ["daily_enrollment"]
+            anomaly_kpis = [domain.hero()]
 
     recommendations = []
 

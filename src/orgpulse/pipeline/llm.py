@@ -4,6 +4,9 @@ import json
 import os
 from typing import Protocol, runtime_checkable
 
+from orgpulse.core.domain import Domain
+from orgpulse.domains.pharma import PHARMA
+
 
 @runtime_checkable
 class LLMClient(Protocol):
@@ -12,32 +15,22 @@ class LLMClient(Protocol):
 
 
 class OfflineLLM:
-    """Deterministic, keyless LLM stub — the public-demo default."""
+    """Deterministic, keyless LLM stub — the public-demo default. Its framing comes from the
+    active domain (the stub can't be prompted), so offline output is domain-correct (pharma GxP,
+    banking FINMA, …) without a key."""
+
+    def __init__(self, domain: "Domain" = PHARMA) -> None:
+        self._domain = domain
 
     def analyze(self, system: str, prompt: str) -> str:
         head = prompt.strip().splitlines()[0] if prompt.strip() else "the monitored KPIs"
         return (
             "Automated interpretation (offline mode): "
-            f"the pipeline observed — {head}. These movements are assessed against "
-            "GxP quality expectations; where a KPI is Warning/Critical the trend and "
-            "forecast suggest a deviation trigger may apply and should be reviewed by "
-            "the quality team."
+            f"the pipeline observed — {head}. {self._domain.offline_framing}"
         )
 
     def recommend(self, system: str, prompt: str, kpis: list[str]) -> list[dict]:
-        out = []
-        for i, kpi in enumerate(kpis, start=1):
-            out.append({
-                "kpi": kpi,
-                "capa_frame": f"CAPA-{i:03d}",
-                "text": (
-                    f"Open a CAPA review for '{kpi}': confirm the signal against source "
-                    "data, assess whether an ICH E6(R3) deviation threshold is crossed, "
-                    "and, if confirmed, document root cause and corrective action. "
-                    "Escalate to the responsible quality owner for sign-off."
-                ),
-            })
-        return out
+        return self._domain.offline_recommend(kpis)
 
 
 def _anthropic_client():  # indirection so tests can monkeypatch
@@ -88,7 +81,7 @@ class ClaudeLLM:
         return json.loads(text)["recommendations"]
 
 
-def make_llm(offline: bool, model: str = "claude-sonnet-5") -> LLMClient:
+def make_llm(offline: bool, model: str = "claude-sonnet-5", domain: "Domain" = PHARMA) -> LLMClient:
     if offline or not os.environ.get("ANTHROPIC_API_KEY"):
-        return OfflineLLM()
+        return OfflineLLM(domain)
     return ClaudeLLM(model=model)

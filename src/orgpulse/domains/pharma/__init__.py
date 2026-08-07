@@ -43,6 +43,22 @@ def _extract(streams: dict, kpi: str):
     raise KeyError(f"unknown pharma KPI: {kpi}")
 
 
+def _pharma_offline_recommend(kpis: list) -> list[dict]:
+    return [
+        {
+            "kpi": kpi,
+            "capa_frame": f"CAPA-{i:03d}",
+            "text": (
+                f"Open a CAPA review for '{kpi}': confirm the signal against source "
+                "data, assess whether an ICH E6(R3) deviation threshold is crossed, "
+                "and, if confirmed, document root cause and corrective action. "
+                "Escalate to the responsible quality owner for sign-off."
+            ),
+        }
+        for i, kpi in enumerate(kpis, start=1)
+    ]
+
+
 PHARMA = Domain(
     name="pharma",
     generate=_generate,
@@ -59,4 +75,10 @@ PHARMA = Domain(
         "context": "GxP-regulated pharmaceutical operations (clinical trials, QC/lab, supply chain)",
     },
     hero_frame=_hero_frame,
+    offline_framing=(
+        "These movements are assessed against GxP quality expectations; where a KPI is "
+        "Warning/Critical the trend and forecast suggest a deviation trigger may apply and "
+        "should be reviewed by the quality team."
+    ),
+    offline_recommend=_pharma_offline_recommend,
 )

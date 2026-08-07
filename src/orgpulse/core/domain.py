@@ -39,6 +39,15 @@ class KpiSpec:
     thresholds: dict | None = None  # THRESHOLD mode: e.g. {"warn": 11.5, "critical": 10.5, "direction": "below"}
 
 
+def _default_offline_recommend(kpis: list) -> list[dict]:
+    """Domain-neutral offline recommendations. Each domain overrides this with its own language."""
+    return [
+        {"kpi": k, "capa_frame": f"REC-{i:03d}",
+         "text": f"Review '{k}' against source data and escalate to the responsible owner for sign-off."}
+        for i, k in enumerate(kpis, start=1)
+    ]
+
+
 @dataclass(frozen=True)
 class Domain:
     """A complete, self-consistent domain configuration for the engine."""
@@ -47,12 +56,19 @@ class Domain:
     generate: Callable[..., dict]          # (start, days, seed) -> {stream_name: DataFrame}
     extract: Callable[[dict, str], object]  # (streams, kpi_name) -> 1-D np.ndarray (raises on unusable input)
     kpi_specs: tuple[KpiSpec, ...]
-    analyst_system: str                     # LLM system prompt for the analyst node
-    recommend_system: str                   # LLM system prompt for the recommend node
+    analyst_system: str                     # LLM system prompt for the analyst node (online/Claude)
+    recommend_system: str                   # LLM system prompt for the recommend node (online/Claude)
     compliance: dict = field(default_factory=dict)  # content for governance/classification rendering
     # (streams) -> DataFrame(ds, y) for the hero KPI — Prophet needs the dated frame, not just the
     # value array `extract` returns. Optional; if absent, no forecast is published.
     hero_frame: Callable[[dict], object] | None = None
+    # OFFLINE (keyless) framing: the deterministic stub can't be prompted, so the domain supplies
+    # its own language. `offline_framing` completes the analyst sentence; `offline_recommend`
+    # builds the recommendation dicts. Defaults are domain-neutral; each domain overrides them.
+    offline_framing: str = (
+        "A qualified owner should review any Warning/Critical KPI against source data before acting."
+    )
+    offline_recommend: Callable[[list], list] = _default_offline_recommend
 
     def __post_init__(self) -> None:
         # A Domain is a self-consistent VALUE: a malformed one must fail at CONSTRUCTION, never

@@ -61,8 +61,8 @@ def run_pipeline(
     - generated_at = now if given else datetime.now().isoformat(timespec="seconds")
     - run_id = arg or a timestamp-derived id
     """
-    # Prepare LLM
-    llm = make_llm(offline, model)
+    # Prepare LLM (offline stub is framed by the domain)
+    llm = make_llm(offline, model, domain)
 
     # Build and compile graph
     compiled_graph = build_graph(llm, domain)
