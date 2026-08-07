@@ -12,6 +12,7 @@ platform — describe it as such.
 """
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -54,6 +55,11 @@ class Domain:
     hero_frame: Callable[[dict], object] | None = None
 
     def __post_init__(self) -> None:
+        # A Domain is a self-consistent VALUE: a malformed one must fail at CONSTRUCTION, never
+        # degrade or fail open at run time. Validate hero count, unique names, detection-mode
+        # type, and physically-sensible bounds (finite-or-None, lo <= hi).
+        if not self.kpi_specs:
+            raise ValueError(f"domain {self.name!r} has no KPIs")
         heroes = [k for k in self.kpi_specs if k.is_hero]
         if len(heroes) != 1:
             raise ValueError(
@@ -62,6 +68,15 @@ class Domain:
         names = [k.name for k in self.kpi_specs]
         if len(names) != len(set(names)):
             raise ValueError(f"domain {self.name!r} has duplicate KPI names: {names}")
+        for k in self.kpi_specs:
+            if not isinstance(k.detection_mode, DetectionMode):
+                raise ValueError(f"KPI {k.name!r}: detection_mode must be a DetectionMode, got {k.detection_mode!r}")
+            lo, hi = k.domain_bounds
+            for edge, v in (("lower", lo), ("upper", hi)):
+                if v is not None and not (isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)):
+                    raise ValueError(f"KPI {k.name!r}: {edge} bound must be None or a finite number, got {v!r}")
+            if lo is not None and hi is not None and lo > hi:
+                raise ValueError(f"KPI {k.name!r}: lower bound {lo} exceeds upper bound {hi}")
 
     def hero(self) -> str:
         """The KPI to forecast."""
@@ -72,4 +87,7 @@ class Domain:
         return {k.name: k.domain_bounds for k in self.kpi_specs}
 
     def spec(self, name: str) -> KpiSpec:
-        return next(k for k in self.kpi_specs if k.name == name)
+        try:
+            return next(k for k in self.kpi_specs if k.name == name)
+        except StopIteration:
+            raise KeyError(f"domain {self.name!r} has no KPI named {name!r}") from None

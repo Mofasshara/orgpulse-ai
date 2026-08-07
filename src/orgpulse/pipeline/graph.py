@@ -68,10 +68,10 @@ def run_pipeline(
     compiled_graph = build_graph(llm, domain)
 
     # Seed initial state
+    # Seed the streams under the generic "streams" key so the graph carries any domain's streams
+    # (a raw pharma call passes clinical/qc/supply; a domain-driven caller can pass its own).
     initial_state: PipelineState = {
-        "clinical": clinical,
-        "qc": qc,
-        "supply": supply,
+        "streams": {"clinical": clinical, "qc": qc, "supply": supply},
         "offline": offline,
     }
 

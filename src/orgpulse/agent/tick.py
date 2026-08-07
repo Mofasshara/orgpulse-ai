@@ -157,7 +157,9 @@ def run_tick(
     else:
         overall = Severity.SAFE
 
-    forecast = forecast_node(streams, domain)["forecast"]
+    # Pass the streams AND the detection findings so forecast_node can enforce detect/forecast
+    # parity (no forecast for a hero detection ruled DATA_QUALITY).
+    forecast = forecast_node({"streams": streams, "kpi_findings": findings}, domain)["forecast"]
     llm = make_llm(offline)
     state = {"kpi_findings": findings, "overall_severity": overall.name, "forecast": forecast}
     analysis = analyst_node(state, llm, domain)["analysis"]

@@ -94,11 +94,14 @@ def detect_node(state: PipelineState, domain: Domain = PHARMA) -> DetectNodeOutp
     contract at the node level. Extraction happens inside the guard so a missing stream/column
     or a ragged array is DATA_QUALITY, not a crash.
     """
+    # Streams live under a generic "streams" key when driven by the graph; direct callers may
+    # pass the streams dict as the state itself. Support both.
+    streams = state.get("streams") or state
     bounds = domain.bounds()
     findings: list[KpiFinding] = []
     for spec in domain.kpi_specs:
         try:
-            series = domain.extract(state, spec.name)
+            series = domain.extract(streams, spec.name)
         except (KeyError, ValueError, TypeError, IndexError):
             findings.append(data_quality_finding(spec.name, "unusable input (missing stream/column or malformed data)"))
             continue
@@ -133,13 +136,21 @@ def forecast_node(state: PipelineState, domain: Domain = PHARMA) -> ForecastNode
     forecast_result = {}
     hero = domain.hero()
 
+    # PARITY (engine invariant): detection runs before forecast. If detection ruled the hero
+    # unusable (DATA_QUALITY), publish NO forecast — regardless of whether the domain's
+    # `extract` and `hero_frame` happen to agree. This encodes "one validated verdict, both
+    # consumers" at the engine level instead of trusting each domain to keep them consistent.
+    hero_finding = next((f for f in state.get("kpi_findings", []) if getattr(f, "kpi", None) == hero), None)
+    if hero_finding is not None and hero_finding.severity == "DATA_QUALITY":
+        return {"forecast": forecast_result}
+
     if domain.hero_frame is not None:
-        # Build the hero's dated series through the SAME validated builder + series check that
-        # detection uses — so a hero KPI that detection rules DATA_QUALITY (out-of-domain,
-        # duplicate rows, NaT dates, non-integer/negative counts, non-finite, too short) never
-        # yields a numeric forecast. One validator, both consumers.
+        # Build the hero's dated series; the SAME series check detection uses also guards the
+        # reverse divergence (a clean detection but a corrupt hero_frame) so no numeric forecast
+        # is published for out-of-domain/duplicate/NaT/non-finite/too-short hero data.
+        streams = state.get("streams") or state
         try:
-            daily_df = domain.hero_frame(state)
+            daily_df = domain.hero_frame(streams)
             y = daily_df["y"].to_numpy(dtype=float)
         except (KeyError, ValueError, TypeError):
             return {"forecast": forecast_result}
