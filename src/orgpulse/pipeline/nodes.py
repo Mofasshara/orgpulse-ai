@@ -183,9 +183,9 @@ def forecast_node(state: PipelineState, domain: Domain = PHARMA) -> ForecastNode
     return {"forecast": forecast_result}
 
 
-def analyst_node(state: PipelineState, llm: LLMClient) -> dict:
+def analyst_node(state: PipelineState, llm: LLMClient, domain: Domain = PHARMA) -> dict:
     """
-    Analyze findings and forecast via LLM.
+    Analyze findings and forecast via LLM, using the domain's analyst framing.
 
     Builds a prompt from kpi_findings + forecast, calls llm.analyze,
     returns {"analysis": <str>}.
@@ -214,12 +214,12 @@ def analyst_node(state: PipelineState, llm: LLMClient) -> dict:
     prompt = "\n".join(prompt_lines)
 
     # Call LLM analyze
-    analysis = llm.analyze("You are a clinical data quality analyst.", prompt)
+    analysis = llm.analyze(domain.analyst_system, prompt)
 
     return {"analysis": analysis}
 
 
-def recommendation_node(state: PipelineState, llm: LLMClient) -> dict:
+def recommendation_node(state: PipelineState, llm: LLMClient, domain: Domain = PHARMA) -> dict:
     """
     Generate recommendations for flagged KPIs.
 
@@ -259,7 +259,7 @@ def recommendation_node(state: PipelineState, llm: LLMClient) -> dict:
             prompt_lines.append(f"- {kpi}")
         prompt = "\n".join(prompt_lines)
 
-        rec_dicts = llm.recommend("You are a quality assurance CAPA expert.", prompt, kpis=anomaly_kpis)
+        rec_dicts = llm.recommend(domain.recommend_system, prompt, kpis=anomaly_kpis)
         requested = set(anomaly_kpis)
         for rec_dict in rec_dicts if isinstance(rec_dicts, list) else []:
             # Be strict about the LLM's output (the online Claude path is not schema-guaranteed

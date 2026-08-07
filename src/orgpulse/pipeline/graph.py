@@ -7,34 +7,28 @@ from datetime import datetime
 import pandas as pd
 from langgraph.graph import StateGraph, START, END
 
+from orgpulse.core.domain import Domain
+from orgpulse.domains.pharma import PHARMA
 from orgpulse.pipeline.llm import LLMClient, make_llm
 from orgpulse.pipeline.nodes import detect_node, forecast_node, analyst_node, recommendation_node
 from orgpulse.pipeline.state import Findings, PipelineState, HUMAN_OVERSIGHT_DISCLAIMER
 
 
-def build_graph(llm: LLMClient):
+def build_graph(llm: LLMClient, domain: Domain = PHARMA):
     """
     Construct a StateGraph(PipelineState) with nodes:
     detect → forecast → analyst → recommend
 
-    Analyst and recommend nodes are wrapped in closures to pass llm.
+    All four nodes are wrapped in closures that bind the active `domain` (and `llm` for the two
+    LLM nodes), so the graph runs against any domain configuration.
     Returns the compiled graph.
     """
     graph = StateGraph(PipelineState)
 
-    # Add nodes
-    graph.add_node("detect", detect_node)
-    graph.add_node("forecast", forecast_node)
-
-    # Wrap analyst and recommend to pass llm
-    def analyst_node_with_llm(state: PipelineState) -> dict:
-        return analyst_node(state, llm)
-
-    def recommendation_node_with_llm(state: PipelineState) -> dict:
-        return recommendation_node(state, llm)
-
-    graph.add_node("analyst", analyst_node_with_llm)
-    graph.add_node("recommend", recommendation_node_with_llm)
+    graph.add_node("detect", lambda state: detect_node(state, domain))
+    graph.add_node("forecast", lambda state: forecast_node(state, domain))
+    graph.add_node("analyst", lambda state: analyst_node(state, llm, domain))
+    graph.add_node("recommend", lambda state: recommendation_node(state, llm, domain))
 
     # Add edges
     graph.add_edge(START, "detect")
@@ -55,6 +49,7 @@ def run_pipeline(
     run_id: str | None = None,
     now: str | None = None,
     model: str = "claude-sonnet-5",
+    domain: Domain = PHARMA,
 ) -> Findings:
     """
     Run the end-to-end offline-deterministic pipeline.
@@ -70,7 +65,7 @@ def run_pipeline(
     llm = make_llm(offline, model)
 
     # Build and compile graph
-    compiled_graph = build_graph(llm)
+    compiled_graph = build_graph(llm, domain)
 
     # Seed initial state
     initial_state: PipelineState = {
