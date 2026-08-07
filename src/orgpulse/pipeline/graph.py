@@ -41,9 +41,7 @@ def build_graph(llm: LLMClient, domain: Domain = PHARMA):
 
 
 def run_pipeline(
-    clinical: pd.DataFrame,
-    qc: pd.DataFrame,
-    supply: pd.DataFrame,
+    streams: dict,
     *,
     offline: bool = True,
     run_id: str | None = None,
@@ -52,14 +50,12 @@ def run_pipeline(
     domain: Domain = PHARMA,
 ) -> Findings:
     """
-    Run the end-to-end offline-deterministic pipeline.
+    Run the end-to-end offline-deterministic pipeline for a domain.
 
-    - Build llm using make_llm(offline, model)
-    - Seed initial state with the three DataFrames
-    - Invoke the compiled graph
-    - Assemble Findings from the final state
-    - generated_at = now if given else datetime.now().isoformat(timespec="seconds")
-    - run_id = arg or a timestamp-derived id
+    ``streams`` is the domain's {stream_name: DataFrame} dict (pharma: clinical/qc/supply). It is
+    carried through the graph under the generic ``streams`` state key so ANY domain's streams
+    traverse it (this is what makes the public API domain-agnostic, matching the tick).
+    - Build llm via make_llm(offline, model, domain); build_graph(llm, domain); invoke; assemble.
     """
     # Prepare LLM (offline stub is framed by the domain)
     llm = make_llm(offline, model, domain)
@@ -67,13 +63,8 @@ def run_pipeline(
     # Build and compile graph
     compiled_graph = build_graph(llm, domain)
 
-    # Seed initial state
-    # Seed the streams under the generic "streams" key so the graph carries any domain's streams
-    # (a raw pharma call passes clinical/qc/supply; a domain-driven caller can pass its own).
-    initial_state: PipelineState = {
-        "streams": {"clinical": clinical, "qc": qc, "supply": supply},
-        "offline": offline,
-    }
+    # Seed initial state — the domain's streams under the generic key.
+    initial_state: PipelineState = {"streams": streams, "offline": offline}
 
     # Invoke graph
     final_state = compiled_graph.invoke(initial_state)

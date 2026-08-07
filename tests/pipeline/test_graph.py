@@ -19,7 +19,7 @@ def _streams(days=260):
 
 def test_run_pipeline_offline_end_to_end():
     c, q, s = _streams()
-    f = run_pipeline(c, q, s, offline=True, run_id="run-1", now="2026-08-04T07:00:00")
+    f = run_pipeline({"clinical": c, "qc": q, "supply": s}, offline=True, run_id="run-1", now="2026-08-04T07:00:00")
     assert isinstance(f, Findings)
     assert f.run_id == "run-1" and f.overall_severity in {"SAFE", "WARNING", "CRITICAL", "DATA_QUALITY"}
     assert f.kpi_findings and f.recommendations and f.analysis
@@ -30,14 +30,14 @@ def test_run_pipeline_offline_end_to_end():
 
 def test_run_pipeline_is_deterministic_offline():
     c, q, s = _streams()
-    a = run_pipeline(c, q, s, offline=True, run_id="r", now="2026-08-04T07:00:00").to_json_dict()
-    b = run_pipeline(c, q, s, offline=True, run_id="r", now="2026-08-04T07:00:00").to_json_dict()
+    a = run_pipeline({"clinical": c, "qc": q, "supply": s}, offline=True, run_id="r", now="2026-08-04T07:00:00").to_json_dict()
+    b = run_pipeline({"clinical": c, "qc": q, "supply": s}, offline=True, run_id="r", now="2026-08-04T07:00:00").to_json_dict()
     assert a == b
 
 
 def test_render_report_contains_disclaimer_and_alert():
     c, q, s = _streams()
-    f = run_pipeline(c, q, s, offline=True, run_id="r", now="2026-08-04T07:00:00")
+    f = run_pipeline({"clinical": c, "qc": q, "supply": s}, offline=True, run_id="r", now="2026-08-04T07:00:00")
     md = render_report(f)
     assert "OrgPulse" in md and "PENDING_HUMAN_REVIEW" in md
     assert HUMAN_OVERSIGHT_DISCLAIMER.split(" — ")[0] in md

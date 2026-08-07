@@ -133,10 +133,15 @@ def _findings_schema_reason(fj: dict) -> str | None:
     fc = fj.get("forecast", {})
     if not isinstance(fc, dict):
         return "forecast is not an object"
+    if len(fc) > 1:
+        # The compute engine publishes EXACTLY ONE hero. Multiple top-level forecast keys are
+        # structurally ambiguous (the dashboard would render only the first, hiding the rest) —
+        # reject rather than partly validate.
+        return f"forecast has {len(fc)} top-level keys; exactly one hero is expected"
     if fc:
-        # Validate WHICHEVER hero the dashboard will render — it takes the first forecast key
-        # (domain-agnostic: pharma "daily_enrollment", banking "npl_ratio", …). A metadata-only
-        # or malformed forecast (e.g. a stray top-level "calibration" key) must fail closed.
+        # Validate the single hero the dashboard renders (domain-agnostic: pharma
+        # "daily_enrollment", banking "npl_ratio", …). A metadata-only or malformed forecast
+        # (e.g. a stray top-level "calibration" key) must fail closed.
         hero_key = next(iter(fc))
         hero = fc[hero_key]
         if not isinstance(hero, dict):

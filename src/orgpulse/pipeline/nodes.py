@@ -145,12 +145,19 @@ def forecast_node(state: PipelineState, domain: Domain = PHARMA) -> ForecastNode
         return {"forecast": forecast_result}
 
     if domain.hero_frame is not None:
-        # Build the hero's dated series; the SAME series check detection uses also guards the
-        # reverse divergence (a clean detection but a corrupt hero_frame) so no numeric forecast
-        # is published for out-of-domain/duplicate/NaT/non-finite/too-short hero data.
+        # Build the hero's dated series and validate it FULLY before Prophet sees it — both the
+        # `y` values (via the shared series check) AND the `ds` dates (present, parseable,
+        # non-null, unique). Prophet crashes on NaT/missing ds and silently mis-forecasts on
+        # duplicate ds, so a corrupt hero_frame must yield NO forecast, never a crash or a
+        # bogus one. (Pharma's builder already guarantees clean dates; this protects any domain.)
         streams = state.get("streams") or state
         try:
             daily_df = domain.hero_frame(streams)
+            if "ds" not in daily_df.columns or "y" not in daily_df.columns:
+                return {"forecast": forecast_result}
+            ds = pd.to_datetime(daily_df["ds"], errors="coerce")
+            if ds.isna().any() or ds.duplicated().any():
+                return {"forecast": forecast_result}
             y = daily_df["y"].to_numpy(dtype=float)
         except (KeyError, ValueError, TypeError):
             return {"forecast": forecast_result}
@@ -264,9 +271,10 @@ def recommendation_node(state: PipelineState, llm: LLMClient, domain: Domain = P
 
     recommendations = []
 
-    # Anomaly KPIs -> LLM-authored CAPA recommendations
+    # Anomaly KPIs -> LLM-authored recommendations (domain framing comes from recommend_system /
+    # the offline stub; the engine's user prompt is domain-neutral).
     if anomaly_kpis:
-        prompt_lines = ["Generate CAPA recommendations for the following flagged KPIs:"]
+        prompt_lines = ["Generate recommendations for the following flagged KPIs:"]
         for kpi in anomaly_kpis:
             prompt_lines.append(f"- {kpi}")
         prompt = "\n".join(prompt_lines)
@@ -300,12 +308,7 @@ def recommendation_node(state: PipelineState, llm: LLMClient, domain: Domain = P
             Recommendation(
                 kpi=kpi,
                 capa_frame="DATA-QUALITY",
-                text=(
-                    f"Data-quality issue on '{kpi}': the detector could not assess this KPI "
-                    "(missing, corrupt, or insufficient data). Investigate the data source and "
-                    "instrumentation before drawing any conclusion; do NOT treat this as a process "
-                    "deviation or open a CAPA on the process."
-                ),
+                text=domain.dq_recommendation(kpi),
                 disclaimer=HUMAN_OVERSIGHT_DISCLAIMER,
             )
         )

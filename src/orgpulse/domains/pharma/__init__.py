@@ -43,6 +43,15 @@ def _extract(streams: dict, kpi: str):
     raise KeyError(f"unknown pharma KPI: {kpi}")
 
 
+def _pharma_dq_recommendation(kpi: str) -> str:
+    return (
+        f"Data-quality issue on '{kpi}': the detector could not assess this KPI "
+        "(missing, corrupt, or insufficient data). Investigate the data source and "
+        "instrumentation before drawing any conclusion; do NOT treat this as a process "
+        "deviation or open a CAPA on the process."
+    )
+
+
 def _pharma_offline_recommend(kpis: list) -> list[dict]:
     return [
         {
@@ -81,4 +90,5 @@ PHARMA = Domain(
         "should be reviewed by the quality team."
     ),
     offline_recommend=_pharma_offline_recommend,
+    dq_recommendation=_pharma_dq_recommendation,
 )

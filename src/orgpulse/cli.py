@@ -69,7 +69,7 @@ def write_run(out: Path, days: int, seed: int, offline: bool):
     clinical = generate_clinical(start, days, make_rng(seed))
     qc = generate_qc(start, days, make_rng(seed + 1))
     supply = generate_supply(start, days, make_rng(seed + 2))
-    findings = run_pipeline(clinical, qc, supply, offline=offline)
+    findings = run_pipeline({"clinical": clinical, "qc": qc, "supply": supply}, offline=offline)
 
     findings_json = json.dumps(findings.to_json_dict(), indent=2, allow_nan=False)
     report_text = render_report(findings)

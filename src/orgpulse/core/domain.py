@@ -48,6 +48,15 @@ def _default_offline_recommend(kpis: list) -> list[dict]:
     ]
 
 
+def _default_dq_recommendation(kpi: str) -> str:
+    """Domain-neutral text for a data-quality finding. Each domain overrides with its own language."""
+    return (
+        f"Data-quality issue on '{kpi}': the detector could not assess this KPI (missing, corrupt, "
+        "or insufficient data). Investigate the data source and instrumentation before drawing any "
+        "conclusion; do not treat this as a genuine anomaly until the data is fixed."
+    )
+
+
 @dataclass(frozen=True)
 class Domain:
     """A complete, self-consistent domain configuration for the engine."""
@@ -69,6 +78,7 @@ class Domain:
         "A qualified owner should review any Warning/Critical KPI against source data before acting."
     )
     offline_recommend: Callable[[list], list] = _default_offline_recommend
+    dq_recommendation: Callable[[str], str] = _default_dq_recommendation  # (kpi) -> data-quality rec text
 
     def __post_init__(self) -> None:
         # A Domain is a self-consistent VALUE: a malformed one must fail at CONSTRUCTION, never
@@ -93,6 +103,11 @@ class Domain:
                     raise ValueError(f"KPI {k.name!r}: {edge} bound must be None or a finite number, got {v!r}")
             if lo is not None and hi is not None and lo > hi:
                 raise ValueError(f"KPI {k.name!r}: lower bound {lo} exceeds upper bound {hi}")
+        for cb in ("generate", "extract", "offline_recommend", "dq_recommendation"):
+            if not callable(getattr(self, cb)):
+                raise ValueError(f"domain {self.name!r}: {cb} must be callable, got {getattr(self, cb)!r}")
+        if self.hero_frame is not None and not callable(self.hero_frame):
+            raise ValueError(f"domain {self.name!r}: hero_frame must be callable or None")
 
     def hero(self) -> str:
         """The KPI to forecast."""
