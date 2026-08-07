@@ -135,15 +135,25 @@ functions, and detection modes (`TIMESERIES` today; `THRESHOLD` and `DATEMATH` i
 wired when a domain needs them) are engine strategies.
 
 **Proven, not asserted:** `tests/core/test_second_domain.py` builds a minimal *non-pharma* domain
-and runs the full stack on it — the tick, the hero forecast, `verify_run`, the offline framing, and
-the LangGraph pipeline — with **no engine changes**. Every node/loop takes `domain: Domain = PHARMA`,
-so pharma behavior is the default and byte-for-byte unchanged by this seam (golden-master gated).
+and runs the full stack on it — `run_tick`, the public `run_pipeline`, the LangGraph pipeline, the
+hero forecast, `verify_run`, and the offline framing — with **no engine changes**. Each test is
+**mutation-constrained**: reverting any single fix (the detect/forecast parity guard, the hero-frame
+date validation, the generic `streams` state, the domain-agnostic verifier, the domain-hero
+references, or the `Domain` config validation) makes a test fail — so the suite genuinely pins the
+invariants, it isn't a vacuous pass. Every node/loop takes `domain: Domain = PHARMA`, so pharma
+behavior is the default and byte-for-byte unchanged by this seam (golden-master gated).
 
-**Honest residuals (a new domain refines these; they are *framing*, not engine code):** the
-recommendation field/label is still named `capa_frame`/"CAPA Frame:" (pharma terminology; the value
-is domain-supplied), and `governance/classification.py` renders a pharma EU-AI-Act document rather
-than reading `domain.compliance`. A second domain supplies its own compliance content and may
-relabel the frame; neither requires touching the detection/forecast/pipeline/audit engine.
+**Honest residuals (a new domain refines these; they are *framing/config*, not engine code — a
+second domain still produces correct, verifiable, non-pharma output despite them):**
+- The recommendation field/label is still named `capa_frame`/"CAPA Frame:" (pharma terminology; the
+  *value* is domain-supplied).
+- `governance/classification.py` renders a pharma EU-AI-Act document rather than reading
+  `domain.compliance`; a second domain supplies its own compliance content.
+- `Domain`'s `compliance` field is a plain (mutable) dict and the value isn't hashable — it's a
+  configuration record, not a hash key, so this is acceptable but noted.
+- The tick's `input_data_hash` hashes `streams.values()` in insertion order, so a `Domain.generate`
+  **must return its streams in a stable order** (Python dicts preserve construction order; every
+  generator does). This is a domain contract, stated on `Domain.generate`.
 
 ## Governance is not a feature — it's a cross-cut
 

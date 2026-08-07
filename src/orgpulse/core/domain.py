@@ -62,7 +62,10 @@ class Domain:
     """A complete, self-consistent domain configuration for the engine."""
 
     name: str
-    generate: Callable[..., dict]          # (start, days, seed) -> {stream_name: DataFrame}
+    # (start, days, seed) -> {stream_name: DataFrame}. CONTRACT: return streams in a STABLE order
+    # (Python dicts preserve construction order) — the tick's input_data_hash concatenates
+    # streams.values(), so a nondeterministic order would produce unstable lineage hashes.
+    generate: Callable[..., dict]
     extract: Callable[[dict, str], object]  # (streams, kpi_name) -> 1-D np.ndarray (raises on unusable input)
     kpi_specs: tuple[KpiSpec, ...]
     analyst_system: str                     # LLM system prompt for the analyst node (online/Claude)
