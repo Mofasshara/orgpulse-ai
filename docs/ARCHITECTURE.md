@@ -126,17 +126,24 @@ regulated domain and another lives behind a single `Domain` value (`orgpulse/cor
 | `extract(streams, kpi)` → 1-D series | per-KPI extraction (validated raw rows before aggregation) |
 | `kpi_specs` — `KpiSpec(name, domain_bounds, detection_mode, is_hero, thresholds)` | 4 KPIs, all `TIMESERIES`, hero = `daily_enrollment` |
 | `hero_frame(streams)` → dated frame | the daily enrollment series for Prophet |
-| `analyst_system` / `recommend_system` | GxP / ICH-E6(R3) / CAPA framing |
+| `analyst_system` / `recommend_system` | online (Claude) GxP / ICH-E6(R3) framing |
+| `offline_framing` / `offline_recommend` | keyless-stub GxP / CAPA language |
 | `compliance` | EU AI Act context |
 
 **This is a code interface, not a "swap a YAML file" platform** — generators and extractors are
 functions, and detection modes (`TIMESERIES` today; `THRESHOLD` and `DATEMATH` in the data model,
-wired when a domain needs them) are engine strategies. Adding a regulated domain = constructing a
-new `Domain` (a `domains/<name>/` module) and, if it uses a new detection mode, wiring that mode's
-handler in the engine. The engine, tests, and dashboard are shared and unchanged.
+wired when a domain needs them) are engine strategies.
 
-Every node/loop takes `domain: Domain = PHARMA`, so the existing pharma behavior is the default and
-is byte-for-byte unchanged by this seam.
+**Proven, not asserted:** `tests/core/test_second_domain.py` builds a minimal *non-pharma* domain
+and runs the full stack on it — the tick, the hero forecast, `verify_run`, the offline framing, and
+the LangGraph pipeline — with **no engine changes**. Every node/loop takes `domain: Domain = PHARMA`,
+so pharma behavior is the default and byte-for-byte unchanged by this seam (golden-master gated).
+
+**Honest residuals (a new domain refines these; they are *framing*, not engine code):** the
+recommendation field/label is still named `capa_frame`/"CAPA Frame:" (pharma terminology; the value
+is domain-supplied), and `governance/classification.py` renders a pharma EU-AI-Act document rather
+than reading `domain.compliance`. A second domain supplies its own compliance content and may
+relabel the frame; neither requires touching the detection/forecast/pipeline/audit engine.
 
 ## Governance is not a feature — it's a cross-cut
 
