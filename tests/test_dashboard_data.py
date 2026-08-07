@@ -255,6 +255,29 @@ def test_load_history_survives_non_string_generated_at(tmp_path: Path):
     assert len(hist) == 2
 
 
+def _hero_fc(hero):
+    horizons = {h: {"yhat": 1.0, "lower": 0.0, "upper": 2.0} for h in ("h30", "h60", "h90")}
+    return {hero: {"calibration": {"applied": False, "raw_coverage": None}, **horizons}}
+
+
+def test_verify_run_validates_any_hero_and_rejects_multi_or_malformed_forecast(tmp_path: Path):
+    """r10/r11 #4: the verifier must validate WHICHEVER hero the dashboard renders (not only
+    pharma's), accept a valid non-pharma hero, and reject multi-key or malformed forecasts."""
+    valid = {"kpi_findings": [], "recommendations": []}
+    # a valid NON-pharma hero forecast must verify (mutation: restore the daily_enrollment-only check)
+    ok, _ = data.verify_run(_seal_run(tmp_path / "npl_ok", {**valid, "forecast": _hero_fc("npl_ratio")}))
+    assert ok is True
+    # multiple top-level forecast keys are structurally ambiguous -> reject
+    two = {**_hero_fc("risk"), **_hero_fc("other")}
+    assert data.verify_run(_seal_run(tmp_path / "twokeys", {**valid, "forecast": two}))[0] is False
+    # a valid hero PLUS a hidden malformed key -> reject (the hidden one would escape a first-key-only check)
+    hidden = {**_hero_fc("risk"), "hidden_bad": {"h30": {}}}
+    assert data.verify_run(_seal_run(tmp_path / "hidden", {**valid, "forecast": hidden}))[0] is False
+    # a malformed non-pharma hero (missing h60/h90) -> reject
+    bad = {"npl_ratio": {"h30": {"yhat": 1, "lower": 0, "upper": 2}}}
+    assert data.verify_run(_seal_run(tmp_path / "npl_bad", {**valid, "forecast": bad}))[0] is False
+
+
 def test_verify_run_requires_lineage_fields(tmp_path: Path):
     """#6: a run advertised as Article-12 lineage-complete must not verify without its lineage."""
     good = {"overall_severity": "SAFE", "kpi_findings": [], "forecast": {}, "recommendations": []}

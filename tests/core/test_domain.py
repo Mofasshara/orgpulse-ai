@@ -27,3 +27,23 @@ def test_requires_exactly_one_hero():
 def test_rejects_duplicate_kpi_names():
     with pytest.raises(ValueError):
         _domain([KpiSpec("x", is_hero=True), KpiSpec("x")])
+
+
+@pytest.mark.parametrize("bad_bounds", [(float("nan"), 1.0), (0.0, float("inf")), (1.0, 0.0), (True, 1.0)])
+def test_rejects_unsafe_bounds_at_construction(bad_bounds):
+    """A self-consistent Domain must reject NaN/inf/inverted/bool bounds when built, not fail open
+    at run time. Mutation-constrains the __post_init__ bounds validation."""
+    with pytest.raises(ValueError):
+        _domain([KpiSpec("x", bad_bounds, is_hero=True)])
+
+
+def test_rejects_non_enum_detection_mode():
+    with pytest.raises(ValueError):
+        _domain([KpiSpec("x", detection_mode="timeseries", is_hero=True)])  # str, not DetectionMode
+
+
+def test_rejects_non_callable_offline_recommend():
+    with pytest.raises(ValueError):
+        Domain(name="t", generate=lambda **k: {}, extract=lambda s, n: None,
+               kpi_specs=(KpiSpec("x", is_hero=True),), analyst_system="a", recommend_system="r",
+               offline_recommend=None)
