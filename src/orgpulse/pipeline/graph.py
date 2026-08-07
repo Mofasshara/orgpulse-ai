@@ -153,11 +153,13 @@ def render_report(findings: Findings) -> str:
         lines.append(findings.analysis)
         lines.append("")
 
-    # Forecast
-    if findings.forecast and "daily_enrollment" in findings.forecast:
-        lines.append("## Forecast (Daily Enrollment)")
+    # Forecast (hero derived from the artifact so the report is domain-agnostic; the label is the
+    # hero name title-cased — "daily_enrollment" -> "Daily Enrollment", so pharma is unchanged).
+    if findings.forecast:
+        hero = next(iter(findings.forecast))
+        lines.append(f"## Forecast ({hero.replace('_', ' ').title()})")
         lines.append("")
-        hero_forecast = findings.forecast["daily_enrollment"]
+        hero_forecast = findings.forecast[hero]
         for horizon in ["h30", "h60", "h90"]:
             if horizon in hero_forecast:
                 data = hero_forecast[horizon]
