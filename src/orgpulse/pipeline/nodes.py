@@ -6,7 +6,7 @@ from typing import TypedDict
 import numpy as np
 import pandas as pd
 
-from orgpulse.core.domain import Domain
+from orgpulse.core.domain import DetectionMode, Domain, KpiSpec
 from orgpulse.detect.orchestrator import detect_kpi, overall_severity
 from orgpulse.detect.types import Severity
 from orgpulse.detect.validation import MIN_ASSESSMENT_DAYS, kpi_domain_reason, kpi_series_reason
@@ -61,67 +61,48 @@ class ForecastNodeOutput(TypedDict):
     forecast: dict
 
 
-def _kpi_finding(kpi: str, series) -> KpiFinding:
+def _kpi_finding(spec: KpiSpec, series, bounds: dict) -> KpiFinding:
     """
     Assess one KPI series and ALWAYS return a finding. This is the single fail-safe gate:
     the default is DATA_QUALITY, and SAFE/WARNING/CRITICAL are returned only after the data
-    is affirmatively validated (1-D, numeric, >=120 points) AND detected. A short, missing,
-    ragged, or non-numeric series can never be silently omitted or read as SAFE.
-
-    - detail comes from the *driving* detector (the one whose severity == the max severity).
-    - latest_value is a plain Python float (NaN/inf -> None) for JSON safety.
-    - a series shorter than 120 points, non-1-D, non-numeric, non-finite, or with any value
-      outside the KPI's real-world domain becomes DATA_QUALITY (never silently skipped).
+    is affirmatively validated (1-D, numeric, >=120 points, in-domain) AND detected. A short,
+    missing, ragged, non-numeric, or out-of-domain series can never be omitted or read as SAFE.
+    Detection dispatches on the KPI's mode; only TIMESERIES is wired in this refactor.
     """
-    reason = kpi_series_reason(kpi, series, min_len=MIN_ASSESSMENT_DAYS)  # 1-D, numeric, finite, in-domain, >= shared minimum
+    reason = kpi_series_reason(spec.name, series, min_len=MIN_ASSESSMENT_DAYS, bounds=bounds)
     if reason is not None:
-        return data_quality_finding(kpi, reason)
+        return data_quality_finding(spec.name, reason)
+    if spec.detection_mode is not DetectionMode.TIMESERIES:
+        raise NotImplementedError(
+            f"detection mode {spec.detection_mode.value!r} is wired in the banking build, not here"
+        )
     s = np.asarray(series, dtype=float)
     baseline, recent = s[:-30], s[-30:]
-    results = detect_kpi(baseline, recent, kpi=kpi)  # returns DATA_QUALITY on non-finite data
+    results = detect_kpi(baseline, recent, kpi=spec.name)  # returns DATA_QUALITY on non-finite data
     sev = overall_severity(results)
     driving = next((r for r in results if r.severity == sev), results[0])  # detail from the driving detector
     v = float(recent[-1])
     latest = v if math.isfinite(v) else None
-    return KpiFinding(kpi=kpi, severity=sev.name, detail=driving.detail, latest_value=latest)
+    return KpiFinding(kpi=spec.name, severity=sev.name, detail=driving.detail, latest_value=latest)
 
 
-def detect_node(state: PipelineState) -> DetectNodeOutput:
+def detect_node(state: PipelineState, domain: Domain = PHARMA) -> DetectNodeOutput:
     """
-    Detect anomalies for each monitored KPI.
-
-    Hero KPI: clinical daily_enrollment (aggregated across sites)
-    QC KPIs: pass_rate, calibration_offset
-    Supply KPI: lead_time_days
-
-    Each KPI series is split into a >=90-point baseline and a 30-point recent
-    window and run through detect_kpi. Every expected KPI ALWAYS yields a finding: an
-    unusable series (short, non-numeric, non-finite, or out of domain) becomes DATA_QUALITY
-    rather than being skipped.
+    Detect anomalies for each of the domain's KPIs. Every KPI ALWAYS yields a finding: an
+    unusable series (missing, malformed, short, non-finite, or out of domain) becomes
+    DATA_QUALITY rather than being skipped — the "bad data never crashes, never reads SAFE"
+    contract at the node level. Extraction happens inside the guard so a missing stream/column
+    or a ragged array is DATA_QUALITY, not a crash.
     """
-    # Each extractor pulls one KPI series from the (possibly malformed) input. Extraction and
-    # array conversion happen INSIDE the guard below so that a missing column, a 2-D/ragged
-    # column, or any schema corruption becomes a DATA_QUALITY finding rather than crashing the
-    # run — upholding the "bad data never crashes, never reads SAFE" contract at the node level.
-    extractors: list[tuple[str, callable]] = []
-    if "clinical" in state:
-        extractors.append(
-            ("daily_enrollment", lambda: validated_clinical_daily(state["clinical"])["y"].to_numpy())
-        )
-    if "qc" in state:
-        extractors.append(("pass_rate", lambda: state["qc"]["pass_rate"].to_numpy()))
-        extractors.append(("calibration_offset", lambda: state["qc"]["calibration_offset"].to_numpy()))
-    if "supply" in state:
-        extractors.append(("lead_time_days", lambda: state["supply"]["lead_time_days"].to_numpy()))
-
+    bounds = domain.bounds()
     findings: list[KpiFinding] = []
-    for kpi, extract in extractors:
+    for spec in domain.kpi_specs:
         try:
-            series = extract()
+            series = domain.extract(state, spec.name)
         except (KeyError, ValueError, TypeError, IndexError):
-            findings.append(data_quality_finding(kpi, "unusable input (missing column / malformed data)"))
+            findings.append(data_quality_finding(spec.name, "unusable input (missing stream/column or malformed data)"))
             continue
-        findings.append(_kpi_finding(kpi, series))  # always returns a finding (never None)
+        findings.append(_kpi_finding(spec, series, bounds))  # always returns a finding (never None)
 
     # DATA_QUALITY dominates (mirrors detect.orchestrator.overall_severity): if any KPI
     # could not be assessed — or nothing was analyzable at all — the run is DATA_QUALITY,
