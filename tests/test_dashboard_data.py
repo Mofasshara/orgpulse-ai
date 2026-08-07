@@ -223,6 +223,9 @@ def test_verify_run_rejects_nested_schema_malformations(tmp_path: Path):
         "rec_not_object": {**valid, "recommendations": ["not-an-object"]},
         "rec_missing_text": {**valid, "recommendations": [{"kpi": "x", "capa_frame": "C", "review_status": "P", "disclaimer": "d"}]},
         "forecast_only_h30": {**valid, "forecast": {"daily_enrollment": {"h30": {"yhat": 1, "lower": 0, "upper": 2}}}},
+        # r10 #4: a metadata-only forecast (the dashboard would pick this first key as the hero and
+        # crash on h30) must fail closed — verify the hero the renderer actually uses.
+        "forecast_metadata_only": {**valid, "forecast": {"calibration": {"applied": True, "scale_factor": 2.0}}},
         "generated_at_numeric": {**valid, "generated_at": 123},
         # r9 #3: non-finite numbers, malformed calibration, bad enum / boolean
         "nan_latest_value": {**valid, "kpi_findings": [{"kpi": "x", "severity": "SAFE", "detail": "d", "latest_value": float("nan")}]},

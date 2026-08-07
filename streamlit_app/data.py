@@ -133,14 +133,18 @@ def _findings_schema_reason(fj: dict) -> str | None:
     fc = fj.get("forecast", {})
     if not isinstance(fc, dict):
         return "forecast is not an object"
-    hero = fc.get("daily_enrollment")
-    if hero is not None:
+    if fc:
+        # Validate WHICHEVER hero the dashboard will render — it takes the first forecast key
+        # (domain-agnostic: pharma "daily_enrollment", banking "npl_ratio", …). A metadata-only
+        # or malformed forecast (e.g. a stray top-level "calibration" key) must fail closed.
+        hero_key = next(iter(fc))
+        hero = fc[hero_key]
         if not isinstance(hero, dict):
-            return "forecast.daily_enrollment is not an object"
+            return f"forecast.{hero_key} is not an object"
         for h in ("h30", "h60", "h90"):  # the dashboard requires all three when a forecast is present
             hh = hero.get(h)
             if not isinstance(hh, dict) or not all(_is_num(hh.get(b)) for b in ("yhat", "lower", "upper")):
-                return f"forecast.{h} missing finite yhat/lower/upper"
+                return f"forecast.{hero_key}.{h} missing finite yhat/lower/upper"
         # The dashboard dereferences and FORMATS the calibration block — validate it too.
         cal = hero.get("calibration")
         if cal is not None:
