@@ -101,6 +101,8 @@ Anthropic Claude (reasoning, optional) · Hermes (autonomy/scheduling) · Stream
 
 | Path | What's there |
 |------|--------------|
+| `src/orgpulse/core/` | The domain-agnostic seam — `Domain`, `KpiSpec`, `DetectionMode` (see [ARCHITECTURE](docs/ARCHITECTURE.md#domain-configuration-the-engine-is-domain-agnostic)) |
+| `src/orgpulse/domains/pharma/` | The pharma domain config (generators + KPI specs + GxP framing) built on the engine |
 | `src/orgpulse/generators/` | Synthetic clinical / QC / supply streams with injected structural breaks |
 | `src/orgpulse/detect/` | Baseline, Z-score, calibrated CUSUM (live); Isolation Forest + orchestrator (built, not yet wired); validation |
 | `src/orgpulse/forecast/` | Deterministic Prophet forecaster, rolling-origin backtest, interval calibration |

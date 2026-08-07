@@ -114,6 +114,30 @@ The README and diagram reflect the *live* stack (Z-score + CUSUM). Isolation For
 retained as a tested component pending a multivariate integration; it does not run in the
 current pipeline.
 
+## Domain configuration (the engine is domain-agnostic)
+
+Everything above — detection, forecasting, the LangGraph DAG, the autonomous tick, the audit
+trail, the dashboard loader — is a **domain-agnostic engine**. Everything that differs between one
+regulated domain and another lives behind a single `Domain` value (`orgpulse/core/domain.py`):
+
+| The `Domain` carries | Pharma (this repo) |
+|----------------------|--------------------|
+| `generate(start, days, seed)` → streams | clinical, QC, supply generators |
+| `extract(streams, kpi)` → 1-D series | per-KPI extraction (validated raw rows before aggregation) |
+| `kpi_specs` — `KpiSpec(name, domain_bounds, detection_mode, is_hero, thresholds)` | 4 KPIs, all `TIMESERIES`, hero = `daily_enrollment` |
+| `hero_frame(streams)` → dated frame | the daily enrollment series for Prophet |
+| `analyst_system` / `recommend_system` | GxP / ICH-E6(R3) / CAPA framing |
+| `compliance` | EU AI Act context |
+
+**This is a code interface, not a "swap a YAML file" platform** — generators and extractors are
+functions, and detection modes (`TIMESERIES` today; `THRESHOLD` and `DATEMATH` in the data model,
+wired when a domain needs them) are engine strategies. Adding a regulated domain = constructing a
+new `Domain` (a `domains/<name>/` module) and, if it uses a new detection mode, wiring that mode's
+handler in the engine. The engine, tests, and dashboard are shared and unchanged.
+
+Every node/loop takes `domain: Domain = PHARMA`, so the existing pharma behavior is the default and
+is byte-for-byte unchanged by this seam.
+
 ## Governance is not a feature — it's a cross-cut
 
 - **Art. 12 logging** → every run and recommendation is appended to a **hash-chained**
