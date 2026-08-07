@@ -49,6 +49,9 @@ class Domain:
     analyst_system: str                     # LLM system prompt for the analyst node
     recommend_system: str                   # LLM system prompt for the recommend node
     compliance: dict = field(default_factory=dict)  # content for governance/classification rendering
+    # (streams) -> DataFrame(ds, y) for the hero KPI — Prophet needs the dated frame, not just the
+    # value array `extract` returns. Optional; if absent, no forecast is published.
+    hero_frame: Callable[[dict], object] | None = None
 
     def __post_init__(self) -> None:
         heroes = [k for k in self.kpi_specs if k.is_hero]

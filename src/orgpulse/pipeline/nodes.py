@@ -6,9 +6,11 @@ from typing import TypedDict
 import numpy as np
 import pandas as pd
 
+from orgpulse.core.domain import Domain
 from orgpulse.detect.orchestrator import detect_kpi, overall_severity
 from orgpulse.detect.types import Severity
 from orgpulse.detect.validation import MIN_ASSESSMENT_DAYS, kpi_domain_reason, kpi_series_reason
+from orgpulse.domains.pharma import PHARMA
 from orgpulse.forecast.calibration import interval_calibration
 from orgpulse.forecast.prophet_forecaster import forecast_kpi, series_from_generator
 from orgpulse.pipeline.llm import LLMClient
@@ -133,10 +135,10 @@ def detect_node(state: PipelineState) -> DetectNodeOutput:
     return {"kpi_findings": findings, "overall_severity": overall.name}
 
 
-def forecast_node(state: PipelineState) -> ForecastNodeOutput:
+def forecast_node(state: PipelineState, domain: Domain = PHARMA) -> ForecastNodeOutput:
     """
-    Forecast the hero KPI (clinical daily_enrollment) at horizons 30, 60, 90 days,
-    with a calibration factor APPLIED to the published interval (not just diagnosed).
+    Forecast the domain's hero KPI at horizons 30, 60, 90 days, with a calibration factor
+    APPLIED to the published interval (not just diagnosed).
 
     Raw Prophet intervals are overconfident (~70% coverage against a nominal 90%). We
     fit a widening scale via rolling-origin folds (`interval_calibration`) and apply it
@@ -148,22 +150,23 @@ def forecast_node(state: PipelineState) -> ForecastNodeOutput:
     Returns forecast[kpi] with per-horizon {yhat, lower, upper} plus a `calibration` block.
     """
     forecast_result = {}
+    hero = domain.hero()
 
-    if "clinical" in state:
-        # Build the daily series through the SAME validated builder + series check that
+    if domain.hero_frame is not None:
+        # Build the hero's dated series through the SAME validated builder + series check that
         # detection uses — so a hero KPI that detection rules DATA_QUALITY (out-of-domain,
-        # duplicate rows, NaT dates, non-integer/negative per-site counts, non-finite, too
-        # short) never yields a numeric forecast. One validator, both consumers.
+        # duplicate rows, NaT dates, non-integer/negative counts, non-finite, too short) never
+        # yields a numeric forecast. One validator, both consumers.
         try:
-            daily_df = validated_clinical_daily(state["clinical"])
+            daily_df = domain.hero_frame(state)
             y = daily_df["y"].to_numpy(dtype=float)
         except (KeyError, ValueError, TypeError):
             return {"forecast": forecast_result}
-        if kpi_series_reason("daily_enrollment", y, min_len=MIN_ASSESSMENT_DAYS) is not None:
+        if kpi_series_reason(hero, y, min_len=MIN_ASSESSMENT_DAYS, bounds=domain.bounds()) is not None:
             return {"forecast": forecast_result}
 
         # Forecast at horizons 30, 60, 90
-        fc = forecast_kpi(daily_df, "daily_enrollment", horizons=(30, 60, 90))
+        fc = forecast_kpi(daily_df, hero, horizons=(30, 60, 90))
 
         # Fit the interval-calibration scale on this history and APPLY it to the
         # published bounds. Guard short histories: fall back to raw, uncalibrated.
@@ -184,13 +187,13 @@ def forecast_node(state: PipelineState) -> ForecastNodeOutput:
                 "note": "history too short to calibrate; raw Prophet interval published",
             }
 
-        forecast_result["daily_enrollment"] = {"calibration": cal_meta}
+        forecast_result[hero] = {"calibration": cal_meta}
         for h in (30, 60, 90):
             fc_at_h = fc.at_horizon(h)
             yhat = float(fc_at_h["yhat"])
             lower = float(fc_at_h["yhat_lower"])
             upper = float(fc_at_h["yhat_upper"])
-            forecast_result["daily_enrollment"][f"h{h}"] = {
+            forecast_result[hero][f"h{h}"] = {
                 "yhat": yhat,
                 "lower": yhat - scale * (yhat - lower),  # widen by the calibration scale
                 "upper": yhat + scale * (upper - yhat),

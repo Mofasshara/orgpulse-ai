@@ -25,12 +25,17 @@ def _generate(start: date, days: int, seed: int) -> dict:
     }
 
 
+def _hero_frame(streams: dict):
+    # The hero (daily_enrollment) as a validated daily (ds, y) frame — what Prophet needs.
+    from orgpulse.pipeline.nodes import validated_clinical_daily
+    return validated_clinical_daily(streams["clinical"])
+
+
 def _extract(streams: dict, kpi: str):
     # Lazy import: validated_clinical_daily currently lives in pipeline.nodes; importing it lazily
     # avoids a module-load cycle once the pipeline imports this domain.
     if kpi == "daily_enrollment":
-        from orgpulse.pipeline.nodes import validated_clinical_daily
-        return validated_clinical_daily(streams["clinical"])["y"].to_numpy()
+        return _hero_frame(streams)["y"].to_numpy()
     if kpi in ("pass_rate", "calibration_offset"):
         return streams["qc"][kpi].to_numpy()
     if kpi == "lead_time_days":
@@ -53,4 +58,5 @@ PHARMA = Domain(
     compliance={
         "context": "GxP-regulated pharmaceutical operations (clinical trials, QC/lab, supply chain)",
     },
+    hero_frame=_hero_frame,
 )
