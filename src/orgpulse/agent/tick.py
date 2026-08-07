@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 
 from orgpulse.agent.baseline_memory import BaselineMemory
-from orgpulse.config import make_rng
+from orgpulse.core.domain import DetectionMode, Domain
 from orgpulse.detect.baseline import fit_baseline
 from orgpulse.detect.cusum import _MIN_BASELINE_N, cusum_detect
 from orgpulse.detect.validation import (
@@ -21,38 +21,12 @@ from orgpulse.detect.validation import (
 from orgpulse.detect.orchestrator import overall_severity
 from orgpulse.detect.types import Severity
 from orgpulse.detect.zscore import zscore_detect
-from orgpulse.generators.clinical import generate_clinical
-from orgpulse.generators.qc import generate_qc
-from orgpulse.generators.supply import generate_supply
+from orgpulse.domains.pharma import PHARMA
 from orgpulse.governance.audit import HashChainedAuditLog
 from orgpulse.pipeline.graph import render_report
 from orgpulse.pipeline.llm import make_llm
-from orgpulse.pipeline.nodes import analyst_node, forecast_node, recommendation_node, validated_clinical_daily
+from orgpulse.pipeline.nodes import analyst_node, forecast_node, recommendation_node
 from orgpulse.pipeline.state import Findings, KpiFinding, data_quality_finding
-
-
-def _kpi_series(clinical, qc, supply) -> list[tuple[str, "np.ndarray | None", "str | None"]]:
-    """Extract each KPI series for the tick, returning (kpi, array, structural_reason).
-
-    The clinical series goes through the SAME validated builder detection uses — so per-site
-    corruption that the daily sum would mask (a negative site total hidden inside a positive
-    aggregate), duplicate rows, NaT dates, and non-integer counts are caught here too. A
-    structural failure yields a DATA_QUALITY reason instead of an array; a missing/broken
-    column likewise. This keeps the autonomous tick and the `run` pipeline on one gate.
-    """
-    out: list[tuple[str, np.ndarray | None, str | None]] = []
-    try:
-        out.append(("daily_enrollment", validated_clinical_daily(clinical)["y"].to_numpy(), None))
-    except (KeyError, ValueError, TypeError) as exc:
-        out.append(("daily_enrollment", None, f"unusable clinical input ({exc})"))
-    for kpi, df, col in (("pass_rate", qc, "pass_rate"),
-                         ("calibration_offset", qc, "calibration_offset"),
-                         ("lead_time_days", supply, "lead_time_days")):
-        try:
-            out.append((kpi, df[col].to_numpy(), None))
-        except (KeyError, TypeError) as exc:
-            out.append((kpi, None, f"unusable input ({exc})"))
-    return out
 
 
 def run_tick(
@@ -66,6 +40,7 @@ def run_tick(
     offline: bool = True,
     out_root: Path = Path("runs"),
     now: str | None = None,
+    domain: Domain = PHARMA,
 ) -> Findings:
     """One autonomous tick: detect the recent PERIOD (``days_per_period``) against the
     REMEMBERED baseline (bootstrap on the first tick), forecast + reason, write run
@@ -104,9 +79,8 @@ def run_tick(
         )
     days = base_days + tick_number * days_per_period
     start = date(2026, 1, 1)
-    clinical = generate_clinical(start, days, make_rng(seed))
-    qc = generate_qc(start, days, make_rng(seed + 1))
-    supply = generate_supply(start, days, make_rng(seed + 2))
+    streams = domain.generate(start, days, seed)
+    bounds = domain.bounds()
 
     remembered = memory.load()
     n = days_per_period
@@ -114,10 +88,15 @@ def run_tick(
     new_baselines = {}
     used_bootstrap = False
 
-    for kpi, series, structural_reason in _kpi_series(clinical, qc, supply):
-        # A structural failure (unusable clinical rows / missing column) is DATA_QUALITY.
-        if structural_reason is not None:
-            findings.append(data_quality_finding(kpi, structural_reason))
+    for spec in domain.kpi_specs:
+        kpi = spec.name
+        # Extraction goes through the domain (clinical is validated per-row before aggregation,
+        # so per-site corruption masked by the daily sum is caught). Any structural failure
+        # (missing stream/column, ragged data) is DATA_QUALITY, not a crash.
+        try:
+            series = domain.extract(streams, kpi)
+        except (KeyError, ValueError, TypeError, IndexError) as exc:
+            findings.append(data_quality_finding(kpi, f"unusable input ({exc})"))
             continue
         # Validate the WHOLE ingested series through the shared gate (numeric, 1-D, >= a full
         # baseline window, all-finite, in-domain). Requiring baseline_days (not just the
@@ -125,10 +104,14 @@ def run_tick(
         # divergence where a too-short stream read a free bootstrap SAFE. A violation
         # ANYWHERE — including in the baseline history — is DATA_QUALITY, and NO baseline is
         # persisted from corrupt data (a bad baseline would poison the next tick's detection).
-        reason = kpi_series_reason(kpi, series, min_len=baseline_days)
+        reason = kpi_series_reason(kpi, series, min_len=baseline_days, bounds=bounds)
         if reason is not None:
             findings.append(data_quality_finding(kpi, reason))
             continue
+        if spec.detection_mode is not DetectionMode.TIMESERIES:
+            raise NotImplementedError(
+                f"detection mode {spec.detection_mode.value!r} is wired in the banking build, not here"
+            )
         s = np.asarray(series, dtype=float)
 
         # Established trailing baseline (long window, now validated finite + in-domain) becomes
@@ -146,7 +129,7 @@ def run_tick(
         # which flattens every z-score toward 0), or its sample count doesn't match the window
         # it claims to summarise (a legitimate save always has n == baseline_days).
         if prior is not None and (
-            not baseline_domain_feasible(kpi, prior.mean, prior.std) or prior.n != baseline_days
+            not baseline_domain_feasible(kpi, prior.mean, prior.std, bounds) or prior.n != baseline_days
         ):
             findings.append(data_quality_finding(kpi, "remembered baseline is corrupt/implausible (memory)"))
             continue
@@ -174,11 +157,11 @@ def run_tick(
     else:
         overall = Severity.SAFE
 
-    forecast = forecast_node({"clinical": clinical})["forecast"]
+    forecast = forecast_node(streams, domain)["forecast"]
     llm = make_llm(offline)
     state = {"kpi_findings": findings, "overall_severity": overall.name, "forecast": forecast}
-    analysis = analyst_node(state, llm)["analysis"]
-    rec_out = recommendation_node(state, llm)
+    analysis = analyst_node(state, llm, domain)["analysis"]
+    rec_out = recommendation_node(state, llm, domain)
 
     generated_at = now or datetime.now().isoformat(timespec="seconds")
     run_id = f"tick-{tick_number}-{generated_at}"
@@ -218,7 +201,7 @@ def run_tick(
         findings_hash = hashlib.sha256(fj.encode("utf-8")).hexdigest()
         report_hash = hashlib.sha256(report_text.encode("utf-8")).hexdigest()
         input_data_hash = hashlib.sha256(
-            (clinical.to_csv(index=False) + qc.to_csv(index=False) + supply.to_csv(index=False)).encode("utf-8")
+            "".join(df.to_csv(index=False) for df in streams.values()).encode("utf-8")
         ).hexdigest()
         # Each run dir holds exactly THIS run: clear any prior audit log (the reusable
         # `latest/` dir would otherwise accumulate across ticks and diverge from

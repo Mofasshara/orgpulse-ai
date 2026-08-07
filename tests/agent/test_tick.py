@@ -1,11 +1,20 @@
+from dataclasses import replace
+
 import pytest
 
 from orgpulse.agent.baseline_memory import BaselineMemory
 from orgpulse.agent.tick import run_tick
 from orgpulse.detect.baseline import Baseline
+from orgpulse.domains.pharma import PHARMA
 from orgpulse.governance.audit import HashChainedAuditLog
 
 _KPIS = {"daily_enrollment", "pass_rate", "calibration_offset", "lead_time_days"}
+
+
+def _corrupt_domain(mutate):
+    """A pharma domain whose generated streams are mutated to inject corruption. Replaces the old
+    approach of monkeypatching the generators, which now live behind the Domain's `generate`."""
+    return replace(PHARMA, generate=lambda start, days, seed: mutate(PHARMA.generate(start, days, seed)))
 
 
 def test_baseline_memory_round_trip(tmp_path):
@@ -74,31 +83,25 @@ def test_run_tick_rejects_non_integer_params(tmp_path):
         run_tick(mem, 0, baseline_days=60.5, out_root=tmp_path / "runs", now="2026-08-04T07:00:00", offline=True)
 
 
-def test_bootstrap_tick_with_corrupt_current_is_data_quality_not_safe(tmp_path, monkeypatch):
+def test_bootstrap_tick_with_corrupt_current_is_data_quality_not_safe(tmp_path):
     """Fail-open regression (#3): on the bootstrap tick (no remembered baseline) run_tick set
     SAFE unconditionally, without validating the current data. Corrupt current data must be
     DATA_QUALITY + alert, even with no prior baseline."""
     import numpy as np
-    from orgpulse.agent import tick as tickmod
 
-    orig = tickmod.generate_qc
-    monkeypatch.setattr(tickmod, "generate_qc",
-                        lambda *a, **k: orig(*a, **k).assign(pass_rate=np.nan))
+    domain = _corrupt_domain(lambda s: {**s, "qc": s["qc"].assign(pass_rate=np.nan)})
     f = run_tick(BaselineMemory(tmp_path / "m.json"), 0, out_root=tmp_path / "runs",
-                 now="2026-08-04T07:00:00", offline=True)
+                 now="2026-08-04T07:00:00", offline=True, domain=domain)
     sev = {kf.kpi: kf.severity for kf in f.kpi_findings}
     assert sev["pass_rate"] == "DATA_QUALITY"          # corrupt current, no baseline -> DQ (not SAFE)
     assert f.overall_severity == "DATA_QUALITY" and f.alert is True
 
 
-def test_tick_survives_wrong_dtype_generator_output(tmp_path, monkeypatch):
+def test_tick_survives_wrong_dtype_generator_output(tmp_path):
     """#2: a stringified/corrupt generator column must become DATA_QUALITY, not crash the tick."""
-    from orgpulse.agent import tick as tickmod
-    orig = tickmod.generate_qc
-    monkeypatch.setattr(tickmod, "generate_qc",
-                        lambda *a, **k: orig(*a, **k).assign(pass_rate="not-a-number"))
+    domain = _corrupt_domain(lambda s: {**s, "qc": s["qc"].assign(pass_rate="not-a-number")})
     f = run_tick(BaselineMemory(tmp_path / "m.json"), 0, out_root=tmp_path / "runs",
-                 now="2026-08-04T07:00:00", offline=True)          # must not raise
+                 now="2026-08-04T07:00:00", offline=True, domain=domain)          # must not raise
     sev = {kf.kpi: kf.severity for kf in f.kpi_findings}
     assert sev["pass_rate"] == "DATA_QUALITY" and f.overall_severity == "DATA_QUALITY"
 
@@ -124,16 +127,14 @@ def test_tick_audit_records_remembered_baseline_lineage(tmp_path):
     assert b_lo != b_hi            # ...but different remembered baseline IS in the lineage
 
 
-def test_tick_catches_per_site_clinical_corruption_masked_by_aggregation(tmp_path, monkeypatch):
+def test_tick_catches_per_site_clinical_corruption_masked_by_aggregation(tmp_path):
     """Self-review finding: the AUTONOMOUS tick built its clinical series with the raw
     aggregator (not the validated builder detection uses), so per-site corruption that the
     daily sum hides — a negative site total inside a positive aggregate, duplicate rows, NaT
     dates — read SAFE in the scheduled agent. It must be DATA_QUALITY, like the `run` path."""
     import numpy as np
     import pandas as pd
-    from orgpulse.agent import tick as tickmod
 
-    orig = tickmod.generate_clinical
     cases = {
         "per_site_negative": lambda df: df.assign(
             daily_enrollment=np.where(df.site_id == 0, -1, 1)),           # aggregate stays positive
@@ -141,25 +142,20 @@ def test_tick_catches_per_site_clinical_corruption_masked_by_aggregation(tmp_pat
         "duplicate": lambda df: pd.concat([df, df.iloc[[0]]], ignore_index=True),
     }
     for name, mut in cases.items():
-        monkeypatch.setattr(tickmod, "generate_clinical", lambda *a, _m=mut, **k: _m(orig(*a, **k).copy()))
+        domain = _corrupt_domain(lambda s, _m=mut: {**s, "clinical": _m(s["clinical"].copy())})
         f = run_tick(BaselineMemory(tmp_path / f"m_{name}.json"), 0, out_root=tmp_path / f"r_{name}",
-                     now="2026-08-04T07:00:00", offline=True)
+                     now="2026-08-04T07:00:00", offline=True, domain=domain)
         sev = {k.kpi: k.severity for k in f.kpi_findings}["daily_enrollment"]
         assert sev == "DATA_QUALITY", name
 
 
-def test_tick_requires_full_baseline_history_matching_the_run_path(tmp_path, monkeypatch):
+def test_tick_requires_full_baseline_history_matching_the_run_path(tmp_path):
     """#2 (r8): a too-short stream read a free bootstrap SAFE in the tick while the run path
     said DATA_QUALITY. The tick now requires baseline_days of history, closing the divergence."""
-    from datetime import date
-    from orgpulse.agent import tick as tickmod
-    from orgpulse.config import make_rng
-    from orgpulse.generators.clinical import generate_clinical
-
-    monkeypatch.setattr(tickmod, "generate_clinical",
-                        lambda *a, **k: generate_clinical(date(2026, 1, 1), 30, make_rng(42)))
+    # A domain that always generates only 30 days, regardless of the requested horizon.
+    domain = replace(PHARMA, generate=lambda start, days, seed: PHARMA.generate(start, 30, seed))
     f = run_tick(BaselineMemory(tmp_path / "m.json"), 0, out_root=tmp_path / "runs",
-                 now="2026-01-01T00:00:00", offline=True)
+                 now="2026-01-01T00:00:00", offline=True, domain=domain)
     assert {k.kpi: k.severity for k in f.kpi_findings}["daily_enrollment"] == "DATA_QUALITY"
 
 
@@ -197,23 +193,18 @@ def test_tick_rejects_infeasible_remembered_baseline_std_or_n(tmp_path, bad_base
     assert {k.kpi: k.severity for k in f.kpi_findings}["pass_rate"] == "DATA_QUALITY"
 
 
-def test_tick_rejects_domain_violation_in_baseline_history_and_saves_no_baseline(tmp_path, monkeypatch):
+def test_tick_rejects_domain_violation_in_baseline_history_and_saves_no_baseline(tmp_path):
     """#3 (r7): a domain violation anywhere in the ingested stream — including old baseline
     history, not just the current window — must be DATA_QUALITY, and no baseline may be
     persisted from corrupt data (a poisoned baseline would corrupt the next tick)."""
-    import numpy as np
-    from orgpulse.agent import tick as tickmod
+    def corrupt_history(streams):
+        qc = streams["qc"].copy()
+        qc.iloc[0, qc.columns.get_loc("pass_rate")] = 1.5   # impossible value in ancient history
+        return {**streams, "qc": qc}
 
-    orig = tickmod.generate_qc
-
-    def corrupt_history(*a, **k):
-        df = orig(*a, **k).copy()
-        df.iloc[0, df.columns.get_loc("pass_rate")] = 1.5   # impossible value in ancient history
-        return df
-
-    monkeypatch.setattr(tickmod, "generate_qc", corrupt_history)
+    domain = _corrupt_domain(corrupt_history)
     mem = BaselineMemory(tmp_path / "m.json")
-    f = run_tick(mem, 0, out_root=tmp_path / "runs", now="2026-08-04T07:00:00", offline=True)
+    f = run_tick(mem, 0, out_root=tmp_path / "runs", now="2026-08-04T07:00:00", offline=True, domain=domain)
     sev = {kf.kpi: kf.severity for kf in f.kpi_findings}
     assert sev["pass_rate"] == "DATA_QUALITY"
     assert "pass_rate" not in mem.load()                    # corrupt baseline NOT persisted
