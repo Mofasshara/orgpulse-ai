@@ -13,8 +13,9 @@ import pandas as pd
 
 from orgpulse.agent.baseline_memory import BaselineMemory
 from orgpulse.agent.tick import run_tick
-from orgpulse.core.domain import Domain, KpiSpec
+from orgpulse.core.domain import DetectionMode, Domain, KpiSpec
 from orgpulse.pipeline.graph import run_pipeline
+from orgpulse.pipeline.nodes import detect_node
 from streamlit_app import data
 
 
@@ -149,3 +150,67 @@ def test_recommendation_fallback_and_prompts_use_domain_hero(tmp_path):
     joined = " ".join(r.prompts)
     assert "widget_rate" in joined
     assert "daily_enrollment" not in joined and "CAPA" not in joined
+
+
+# --- A multi-mode domain: a TIMESERIES hero + a THRESHOLD KPI + a DATEMATH KPI ---------------
+
+def _mm_generate(start, days, seed):
+    rng = np.random.default_rng(seed)
+    return {"book": pd.DataFrame({
+        "date": pd.date_range(start, periods=days),
+        "npl_ratio": np.abs(2.0 + rng.normal(0, 0.05, days)),   # timeseries hero (>= 0)
+        "cet1": np.full(days, 10.0),                            # THRESHOLD: 10.0 <= critical 10.5 -> CRITICAL
+        "icaap_days": np.full(days, 20.0),                      # DATEMATH: 20 days > 14 -> SAFE
+    })}
+
+
+def _mm_extract(streams, kpi):
+    return streams["book"][kpi].to_numpy()
+
+
+def _mm_hero_frame(streams):
+    b = streams["book"]
+    return pd.DataFrame({"ds": pd.to_datetime(b["date"]), "y": b["npl_ratio"].to_numpy(dtype=float)})
+
+
+MULTIMODE = Domain(
+    name="multimode", generate=_mm_generate, extract=_mm_extract, hero_frame=_mm_hero_frame,
+    kpi_specs=(
+        KpiSpec("npl_ratio", (0.0, None), DetectionMode.TIMESERIES, is_hero=True),
+        KpiSpec("cet1", (0.0, None), DetectionMode.THRESHOLD,
+                thresholds={"warn": 11.5, "critical": 10.5, "direction": "below"}),
+        KpiSpec("icaap_days", (None, None), DetectionMode.DATEMATH,
+                thresholds={"warn_days": 14, "critical_days": 3}),
+    ),
+    analyst_system="a", recommend_system="r",
+)
+
+
+def test_threshold_and_datemath_modes_end_to_end():
+    """The two new modes assess the LATEST value: a breached capital floor is CRITICAL, a distant
+    deadline is SAFE. Mutation: revert the mode dispatch -> these become the timeseries path."""
+    det = detect_node({"streams": MULTIMODE.generate(date(2026, 1, 1), 200, 0)}, MULTIMODE)
+    sev = {f.kpi: f.severity for f in det["kpi_findings"]}
+    assert sev["cet1"] == "CRITICAL"                 # 10.0 <= critical 10.5 (direction below)
+    assert sev["icaap_days"] == "SAFE"               # 20 days remaining > 14
+    assert sev["npl_ratio"] in {"SAFE", "WARNING", "CRITICAL"}
+    assert det["overall_severity"] == "CRITICAL"
+
+
+def test_threshold_mode_needs_no_full_history():
+    """min-history is mode-aware: a THRESHOLD KPI with only 5 points is still assessed (not
+    DATA_QUALITY-for-short), while the TIMESERIES hero still requires a full baseline."""
+    det = detect_node({"streams": MULTIMODE.generate(date(2026, 1, 1), 5, 0)}, MULTIMODE)
+    sev = {f.kpi: f.severity for f in det["kpi_findings"]}
+    assert sev["cet1"] == "CRITICAL"                 # threshold assessed on 5 rows
+    assert sev["npl_ratio"] == "DATA_QUALITY"        # timeseries still needs 120
+
+
+def test_multimode_tick_produces_verifiable_artifact(tmp_path):
+    f = run_tick(BaselineMemory(tmp_path / "m.json"), 0, out_root=tmp_path / "r",
+                 now="2026-01-01T00:00:00", offline=True, domain=MULTIMODE)
+    sev = {k.kpi: k.severity for k in f.kpi_findings}
+    assert sev["cet1"] == "CRITICAL" and sev["icaap_days"] == "SAFE"
+    assert f.overall_severity == "CRITICAL"
+    ok, reason = data.verify_run(tmp_path / "r" / "latest")
+    assert ok is True, reason

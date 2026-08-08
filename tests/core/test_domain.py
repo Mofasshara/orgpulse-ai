@@ -42,6 +42,19 @@ def test_rejects_non_enum_detection_mode():
         _domain([KpiSpec("x", detection_mode="timeseries", is_hero=True)])  # str, not DetectionMode
 
 
+def test_threshold_mode_requires_valid_thresholds():
+    with pytest.raises(ValueError):   # THRESHOLD KPI without thresholds
+        _domain([KpiSpec("h", (0.0, 1.0), is_hero=True),
+                 KpiSpec("x", (0.0, None), DetectionMode.THRESHOLD)])
+    with pytest.raises(ValueError):   # missing 'critical'
+        _domain([KpiSpec("h", (0.0, 1.0), is_hero=True),
+                 KpiSpec("x", (0.0, None), DetectionMode.THRESHOLD, thresholds={"warn": 1.0})])
+    with pytest.raises(ValueError):   # bad direction
+        _domain([KpiSpec("h", (0.0, 1.0), is_hero=True),
+                 KpiSpec("x", (0.0, None), DetectionMode.THRESHOLD,
+                         thresholds={"warn": 1.0, "critical": 0.5, "direction": "sideways"})])
+
+
 def test_rejects_non_callable_offline_recommend():
     with pytest.raises(ValueError):
         Domain(name="t", generate=lambda **k: {}, extract=lambda s, n: None,
