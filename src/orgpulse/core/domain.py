@@ -19,8 +19,8 @@ from enum import Enum
 
 
 class DetectionMode(str, Enum):
-    """How a KPI is assessed. Only TIMESERIES is wired in the core→domain refactor; THRESHOLD and
-    DATEMATH are part of the data model now and get their engine handlers in the banking build."""
+    """How a KPI is assessed. All three modes are wired into the engine (detection dispatches on
+    the KPI's mode in both the run pipeline and the autonomous tick) and mutation-tested."""
 
     TIMESERIES = "timeseries"   # z-score + window-calibrated CUSUM against a remembered baseline
     THRESHOLD = "threshold"     # hard min/max rules (e.g. regulatory capital floors)
@@ -107,12 +107,43 @@ class Domain:
             if lo is not None and hi is not None and lo > hi:
                 raise ValueError(f"KPI {k.name!r}: lower bound {lo} exceeds upper bound {hi}")
             if k.detection_mode is DetectionMode.THRESHOLD:
+                # THRESHOLD/DATEMATH thresholds drive run-time float() arithmetic, so a malformed
+                # one (non-finite, non-numeric, or a directionally-inverted band that renders a
+                # severity unreachable) must fail HERE, at construction — never crash a run or
+                # silently return the wrong severity.
                 th = k.thresholds
-                if not isinstance(th, dict) or not all(isinstance(th.get(x), (int, float)) and not isinstance(th.get(x), bool)
-                                                       for x in ("warn", "critical")):
-                    raise ValueError(f"KPI {k.name!r}: THRESHOLD mode requires thresholds with numeric 'warn' and 'critical'")
-                if th.get("direction", "below") not in ("below", "above"):
+                if not isinstance(th, dict):
+                    raise ValueError(f"KPI {k.name!r}: THRESHOLD mode requires a thresholds dict")
+                nums = {}
+                for x in ("warn", "critical"):
+                    v = th.get(x)
+                    if not (isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)):
+                        raise ValueError(f"KPI {k.name!r}: THRESHOLD '{x}' must be a finite number, got {v!r}")
+                    nums[x] = float(v)
+                direction = th.get("direction", "below")
+                if direction not in ("below", "above"):
                     raise ValueError(f"KPI {k.name!r}: threshold 'direction' must be 'below' or 'above'")
+                # CRITICAL must sit further in the breach direction than WARNING; otherwise one band
+                # is unreachable (e.g. below with critical > warn: any value <= warn is also <= critical).
+                if direction == "below" and nums["critical"] > nums["warn"]:
+                    raise ValueError(f"KPI {k.name!r}: for direction 'below', critical ({nums['critical']:g}) "
+                                     f"must be <= warn ({nums['warn']:g})")
+                if direction == "above" and nums["critical"] < nums["warn"]:
+                    raise ValueError(f"KPI {k.name!r}: for direction 'above', critical ({nums['critical']:g}) "
+                                     f"must be >= warn ({nums['warn']:g})")
+            if k.detection_mode is DetectionMode.DATEMATH:
+                th = k.thresholds or {}
+                if not isinstance(th, dict):
+                    raise ValueError(f"KPI {k.name!r}: DATEMATH thresholds must be a dict or None")
+                day_vals = {}
+                for x, default in (("warn_days", 14.0), ("critical_days", 3.0)):
+                    v = th.get(x, default)
+                    if not (isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)) or v < 0:
+                        raise ValueError(f"KPI {k.name!r}: DATEMATH '{x}' must be a finite number >= 0, got {v!r}")
+                    day_vals[x] = float(v)
+                if day_vals["critical_days"] > day_vals["warn_days"]:
+                    raise ValueError(f"KPI {k.name!r}: DATEMATH critical_days ({day_vals['critical_days']:g}) "
+                                     f"must be <= warn_days ({day_vals['warn_days']:g})")
         for cb in ("generate", "extract", "offline_recommend", "dq_recommendation"):
             if not callable(getattr(self, cb)):
                 raise ValueError(f"domain {self.name!r}: {cb} must be callable, got {getattr(self, cb)!r}")

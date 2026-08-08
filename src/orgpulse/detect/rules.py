@@ -7,6 +7,8 @@ of trend, and a filing deadline is arithmetic, not statistics. Both return the s
 """
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 from orgpulse.core.domain import DetectionMode
@@ -25,6 +27,12 @@ def threshold_detect(values, thresholds: dict, kpi: str) -> AnomalyResult:
     where direction is "below" (breach when value <= threshold, e.g. a capital floor) or "above"
     (breach when value >= threshold, e.g. a utilization ceiling)."""
     v = float(np.asarray(values, dtype=float)[-1])
+    # Fail SAFE-is-not-the-default: a non-finite latest value is unassessable, not "not breached".
+    # The pipeline's series gate usually intercepts this, but the detector must be correct on its
+    # own — consistent with the timeseries detectors, which return DATA_QUALITY on non-finite data.
+    if not math.isfinite(v):
+        return AnomalyResult(kpi=kpi, method="threshold", severity=Severity.DATA_QUALITY, score=v,
+                             flagged=False, detail=f"{kpi}: non-finite value ({v}); cannot assess threshold")
     warn, crit = float(thresholds["warn"]), float(thresholds["critical"])
     direction = thresholds.get("direction", "below")
     if direction == "below":
@@ -43,6 +51,11 @@ def datemath_detect(values, thresholds: dict | None, kpi: str) -> AnomalyResult:
     CRITICAL if overdue or within `critical_days` (default 3); WARNING within `warn_days`
     (default 14); else SAFE."""
     days = float(np.asarray(values, dtype=float)[-1])
+    # A non-finite "days remaining" is unassessable (fail safe, not SAFE) — same contract as
+    # threshold_detect and the timeseries detectors.
+    if not math.isfinite(days):
+        return AnomalyResult(kpi=kpi, method="datemath", severity=Severity.DATA_QUALITY, score=days,
+                             flagged=False, detail=f"{kpi}: non-finite days-remaining ({days}); cannot assess deadline")
     t = thresholds or {}
     warn_days, crit_days = float(t.get("warn_days", 14)), float(t.get("critical_days", 3))
     if days < 0:

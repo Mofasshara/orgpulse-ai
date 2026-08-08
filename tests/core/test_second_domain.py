@@ -214,3 +214,59 @@ def test_multimode_tick_produces_verifiable_artifact(tmp_path):
     assert f.overall_severity == "CRITICAL"
     ok, reason = data.verify_run(tmp_path / "r" / "latest")
     assert ok is True, reason
+
+
+# --- A PURE rule-mode domain (no TIMESERIES KPI at all) ------------------------------------------
+
+def _rule_generate(start, days, seed):
+    return {"book": pd.DataFrame({
+        "date": pd.date_range(start, periods=days),
+        "cet1": np.full(days, 10.0),          # THRESHOLD hero: 10.0 <= critical 10.5 -> CRITICAL
+        "icaap_days": np.full(days, 2.0),     # DATEMATH: 2 days <= critical_days 3 -> CRITICAL
+    })}
+
+
+RULEONLY = Domain(
+    name="ruleonly", generate=_rule_generate, extract=_mm_extract,   # no hero_frame -> no forecast
+    kpi_specs=(
+        KpiSpec("cet1", (0.0, None), DetectionMode.THRESHOLD, is_hero=True,
+                thresholds={"warn": 11.5, "critical": 10.5, "direction": "below"}),
+        KpiSpec("icaap_days", (None, None), DetectionMode.DATEMATH,
+                thresholds={"warn_days": 14, "critical_days": 3}),
+    ),
+    analyst_system="a", recommend_system="r",
+)
+
+
+def test_pure_rule_domain_tick_needs_no_120_day_baseline(tmp_path):
+    """r12 #3: a domain with NO timeseries KPI assesses the latest value only (min_history_for==1),
+    so run_tick must accept baseline_days=1/base_days=1 — the 120-day contract is timeseries-only.
+    Mutation: make the tick's baseline guard unconditional -> ValueError('baseline_days must be >= 120').
+    This was a run-vs-tick divergence (run_pipeline already handled a one-point rule domain)."""
+    f = run_tick(BaselineMemory(tmp_path / "m.json"), 0, out_root=tmp_path / "r",
+                 now="2026-01-01T00:00:00", offline=True, domain=RULEONLY,
+                 baseline_days=1, base_days=1)
+    sev = {k.kpi: k.severity for k in f.kpi_findings}
+    assert sev["cet1"] == "CRITICAL"          # 10.0 <= critical 10.5, on a single row
+    assert sev["icaap_days"] == "CRITICAL"    # 2 days <= critical_days 3
+    assert f.overall_severity == "CRITICAL"
+    assert f.forecast == {}                    # no hero_frame -> no forecast, and no crash
+    ok, reason = data.verify_run(tmp_path / "r" / "latest")
+    assert ok is True, reason
+
+
+def test_forecast_normalizes_timezone_aware_hero_dates(tmp_path):
+    """r12 #4: a hero_frame whose ds is timezone-aware is VALID input and must yield a forecast,
+    not a Prophet crash ('Column ds has timezone specified'). Mutation: drop the tz-normalization
+    in forecast_node -> the original tz-aware frame reaches Prophet and run_tick raises."""
+    def tz_hero(streams):
+        fr = _demo_hero_frame(streams)
+        fr["ds"] = pd.to_datetime(fr["ds"], utc=True)   # tz-aware, otherwise clean
+        return fr
+
+    dom = replace(DEMO, hero_frame=tz_hero)
+    f = run_tick(BaselineMemory(tmp_path / "m.json"), 0, out_root=tmp_path / "r",
+                 now="2026-01-01T00:00:00", offline=True, domain=dom)   # must NOT raise
+    assert "widget_rate" in f.forecast                                  # forecast produced
+    ok, reason = data.verify_run(tmp_path / "r" / "latest")
+    assert ok is True, reason

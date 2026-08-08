@@ -68,7 +68,7 @@ def _kpi_finding(spec: KpiSpec, series, bounds: dict) -> KpiFinding:
     the default is DATA_QUALITY, and SAFE/WARNING/CRITICAL are returned only after the data
     is affirmatively validated (1-D, numeric, >=120 points, in-domain) AND detected. A short,
     missing, ragged, non-numeric, or out-of-domain series can never be omitted or read as SAFE.
-    Detection dispatches on the KPI's mode; only TIMESERIES is wired in this refactor.
+    Detection dispatches on the KPI's mode (TIMESERIES / THRESHOLD / DATEMATH — all wired).
     """
     reason = kpi_series_reason(spec.name, series, min_len=min_history_for(spec.detection_mode), bounds=bounds)
     if reason is not None:
@@ -163,6 +163,13 @@ def forecast_node(state: PipelineState, domain: Domain = PHARMA) -> ForecastNode
             ds = pd.to_datetime(daily_df["ds"], errors="coerce")
             if ds.isna().any() or ds.duplicated().any():
                 return {"forecast": forecast_result}
+            # Prophet rejects timezone-aware ds ("Column ds has timezone specified"). A tz-aware
+            # frame is VALID input, so normalize it to tz-naive (canonicalized to UTC) and write it
+            # BACK to the frame that forecast_kpi/interval_calibration consume — else the original
+            # tz-aware frame reaches Prophet and crashes. Pharma builds tz-naive dates, so this is a
+            # no-op there (guaranteed byte-identical: the frame is only rebuilt when tz is present).
+            if getattr(ds.dt, "tz", None) is not None:
+                daily_df = daily_df.assign(ds=ds.dt.tz_convert("UTC").dt.tz_localize(None))
             y = daily_df["y"].to_numpy(dtype=float)
         except (KeyError, ValueError, TypeError):
             return {"forecast": forecast_result}
@@ -245,13 +252,15 @@ def analyst_node(state: PipelineState, llm: LLMClient, domain: Domain = PHARMA) 
 
 def recommendation_node(state: PipelineState, llm: LLMClient, domain: Domain = PHARMA) -> dict:
     """
-    Generate recommendations for flagged KPIs.
+    Generate recommendations for flagged KPIs, using the domain's framing (not pharma-specific).
 
     Splits flagged findings by severity:
-    - anomaly_kpis (WARNING/CRITICAL) get an LLM-authored CAPA recommendation.
-    - dq_kpis (DATA_QUALITY) get a deterministic data-quality recommendation —
-      a data problem, not a process deviation, so no CAPA on the process.
-    Hero fallback: if both groups are empty, anomaly_kpis = ["daily_enrollment"].
+    - anomaly_kpis (WARNING/CRITICAL) get an LLM-authored recommendation (the online system prompt
+      and offline stub supply the domain's language; the engine's user prompt is domain-neutral).
+    - dq_kpis (DATA_QUALITY) get a deterministic data-quality recommendation from
+      ``domain.dq_recommendation`` — a data problem, not a genuine anomaly.
+    Hero fallback: if both groups are empty, the domain's hero KPI is used (as a data-quality case
+    when the run is DATA_QUALITY, else a routine review).
 
     Every recommendation carries HUMAN_OVERSIGHT_DISCLAIMER and defaults to
     review_status="PENDING_HUMAN_REVIEW". Alert fires on a critical anomaly OR a

@@ -54,11 +54,13 @@ def run_tick(
     unusable (degrading every post-bootstrap tick to DATA_QUALITY).
 
     Parameters are validated so the statistical preconditions the baseline window depends
-    on cannot be silently violated: ``days_per_period > 0``, ``baseline_days >= 60`` (the
-    CUSUM floor), and ``base_days >= max(baseline_days, days_per_period)`` so the very first
-    tick has both a full detection window and a full baseline window (matching the run
-    pipeline's rigor: an ingested stream shorter than ``baseline_days`` is DATA_QUALITY, not
-    a free bootstrap SAFE).
+    on cannot be silently violated: ``days_per_period > 0``, ``baseline_days >= 120`` (the
+    minimum-history contract), and ``base_days >= max(baseline_days, days_per_period)`` so the
+    very first tick has both a full detection window and a full baseline window (matching the run
+    pipeline's rigor: an ingested stream shorter than ``baseline_days`` is DATA_QUALITY, not a
+    free bootstrap SAFE). These preconditions apply only when the domain has a TIMESERIES KPI; a
+    pure rule-mode domain (all THRESHOLD/DATEMATH) assesses the latest value only and needs just
+    one readable row.
     """
     for name, val in (("tick_number", tick_number), ("days_per_period", days_per_period),
                       ("baseline_days", baseline_days), ("base_days", base_days)):
@@ -68,16 +70,25 @@ def run_tick(
         raise ValueError(f"tick_number must be >= 0, got {tick_number}")
     if days_per_period <= 0:
         raise ValueError(f"days_per_period must be > 0, got {days_per_period}")
-    if baseline_days < MIN_ASSESSMENT_DAYS:
-        raise ValueError(
-            f"baseline_days must be >= {MIN_ASSESSMENT_DAYS} (the shared minimum-history contract; "
-            f"the run pipeline needs the same 120 to make an assessment), got {baseline_days}"
-        )
-    if base_days < max(baseline_days, days_per_period):
-        raise ValueError(
-            f"base_days must be >= max(baseline_days={baseline_days}, days_per_period={days_per_period}) "
-            f"so tick 0 has a full detection window and a usable baseline, got {base_days}"
-        )
+    # The 120-day baseline contract exists ONLY for TIMESERIES KPIs (z-score + CUSUM need it).
+    # A pure rule-mode domain (all THRESHOLD/DATEMATH) assesses the latest value only
+    # (`min_history_for` == 1), so forcing baseline_days >= 120 on it is wrong — and was a
+    # run-vs-tick divergence (run_pipeline already handled a one-point rule domain). Enforce the
+    # full contract when any KPI is TIMESERIES; otherwise require just a single readable row.
+    has_timeseries = any(s.detection_mode is DetectionMode.TIMESERIES for s in domain.kpi_specs)
+    if has_timeseries:
+        if baseline_days < MIN_ASSESSMENT_DAYS:
+            raise ValueError(
+                f"baseline_days must be >= {MIN_ASSESSMENT_DAYS} (the shared minimum-history contract; "
+                f"the run pipeline needs the same 120 to make an assessment), got {baseline_days}"
+            )
+        if base_days < max(baseline_days, days_per_period):
+            raise ValueError(
+                f"base_days must be >= max(baseline_days={baseline_days}, days_per_period={days_per_period}) "
+                f"so tick 0 has a full detection window and a usable baseline, got {base_days}"
+            )
+    elif base_days < 1:
+        raise ValueError(f"base_days must be >= 1 (need at least the latest value), got {base_days}")
     days = base_days + tick_number * days_per_period
     start = date(2026, 1, 1)
     streams = domain.generate(start, days, seed)

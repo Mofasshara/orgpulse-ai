@@ -137,14 +137,18 @@ floor), and **`DATEMATH`** (deadline days-until arithmetic) are all wired and mu
 KPI declares its mode (and, for THRESHOLD, its warn/critical thresholds) in its `KpiSpec`;
 non-timeseries modes need only the latest value, not a full baseline.
 
-**Proven, not asserted:** `tests/core/test_second_domain.py` builds a minimal *non-pharma* domain
-and runs the full stack on it — `run_tick`, the public `run_pipeline`, the LangGraph pipeline, the
-hero forecast, `verify_run`, and the offline framing — with **no engine changes**. Each test is
+**Proven, not asserted:** `tests/core/test_second_domain.py` builds minimal *non-pharma* domains
+(a timeseries `DEMO`, a mixed-mode `MULTIMODE`, and a pure rule-mode `RULEONLY`) and runs the full
+stack on them — `run_tick`, the public `run_pipeline`, the LangGraph pipeline, the hero forecast,
+`verify_run`, and the offline framing — with **no engine changes**. Each test is
 **mutation-constrained**: reverting any single fix (the detect/forecast parity guard, the hero-frame
-date validation, the generic `streams` state, the domain-agnostic verifier, the domain-hero
-references, or the `Domain` config validation) makes a test fail — so the suite genuinely pins the
-invariants, it isn't a vacuous pass. Every node/loop takes `domain: Domain = PHARMA`, so pharma
-behavior is the default and byte-for-byte unchanged by this seam (golden-master gated).
+date validation and timezone normalization, the generic `streams` state, the domain-agnostic
+verifier, the domain-hero references, the `Domain` config validation — including THRESHOLD/DATEMATH
+threshold finiteness and ordering, the per-mode detection dispatch, the rule detectors' fail-safe on
+non-finite input, or the tick's timeseries-only baseline contract) makes a test fail — so the suite
+genuinely pins the invariants, it isn't a vacuous pass. Every node/loop takes
+`domain: Domain = PHARMA`, so pharma behavior is the default and byte-for-byte unchanged by this
+seam (golden-master gated).
 
 **Honest residuals (a new domain refines these; they are *framing/config*, not engine code — a
 second domain still produces correct, verifiable, non-pharma output despite them):**

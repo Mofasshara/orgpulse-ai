@@ -33,6 +33,26 @@ def test_datemath_deadline_bands_and_overdue():
     assert overdue.severity is Severity.CRITICAL and "OVERDUE" in overdue.detail
 
 
+import pytest
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_threshold_detect_fails_safe_on_non_finite_latest(bad):
+    """A non-finite latest value is unassessable (DATA_QUALITY), never SAFE and never a wrong
+    severity — consistent with the timeseries detectors. Mutation: drop the isfinite guard and
+    -inf silently reads CRITICAL while NaN/inf read SAFE."""
+    th = {"warn": 11.5, "critical": 10.5, "direction": "below"}
+    r = threshold_detect(_arr(bad), th, "cet1")
+    assert r.severity is Severity.DATA_QUALITY
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_datemath_detect_fails_safe_on_non_finite_latest(bad):
+    """Same fail-safe contract for the deadline detector."""
+    r = datemath_detect(_arr(bad), None, "icaap")
+    assert r.severity is Severity.DATA_QUALITY
+
+
 def test_min_history_is_mode_aware():
     assert min_history_for(DetectionMode.TIMESERIES) == 120
     assert min_history_for(DetectionMode.THRESHOLD) == 1
