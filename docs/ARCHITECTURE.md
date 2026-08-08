@@ -131,8 +131,11 @@ regulated domain and another lives behind a single `Domain` value (`orgpulse/cor
 | `compliance` | EU AI Act context |
 
 **This is a code interface, not a "swap a YAML file" platform** — generators and extractors are
-functions, and detection modes (`TIMESERIES` today; `THRESHOLD` and `DATEMATH` in the data model,
-wired when a domain needs them) are engine strategies.
+functions, and detection modes are engine strategies: **`TIMESERIES`** (z-score + calibrated
+CUSUM against a baseline), **`THRESHOLD`** (hard min/max rules on the latest value — e.g. a capital
+floor), and **`DATEMATH`** (deadline days-until arithmetic) are all wired and mutation-tested. A
+KPI declares its mode (and, for THRESHOLD, its warn/critical thresholds) in its `KpiSpec`;
+non-timeseries modes need only the latest value, not a full baseline.
 
 **Proven, not asserted:** `tests/core/test_second_domain.py` builds a minimal *non-pharma* domain
 and runs the full stack on it — `run_tick`, the public `run_pipeline`, the LangGraph pipeline, the
