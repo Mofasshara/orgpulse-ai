@@ -106,6 +106,13 @@ class Domain:
                     raise ValueError(f"KPI {k.name!r}: {edge} bound must be None or a finite number, got {v!r}")
             if lo is not None and hi is not None and lo > hi:
                 raise ValueError(f"KPI {k.name!r}: lower bound {lo} exceeds upper bound {hi}")
+            if k.detection_mode is DetectionMode.THRESHOLD:
+                th = k.thresholds
+                if not isinstance(th, dict) or not all(isinstance(th.get(x), (int, float)) and not isinstance(th.get(x), bool)
+                                                       for x in ("warn", "critical")):
+                    raise ValueError(f"KPI {k.name!r}: THRESHOLD mode requires thresholds with numeric 'warn' and 'critical'")
+                if th.get("direction", "below") not in ("below", "above"):
+                    raise ValueError(f"KPI {k.name!r}: threshold 'direction' must be 'below' or 'above'")
         for cb in ("generate", "extract", "offline_recommend", "dq_recommendation"):
             if not callable(getattr(self, cb)):
                 raise ValueError(f"domain {self.name!r}: {cb} must be callable, got {getattr(self, cb)!r}")

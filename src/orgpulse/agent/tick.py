@@ -19,6 +19,7 @@ from orgpulse.detect.validation import (
     kpi_series_reason,
 )
 from orgpulse.detect.orchestrator import overall_severity
+from orgpulse.detect.rules import datemath_detect, threshold_detect
 from orgpulse.detect.types import Severity
 from orgpulse.detect.zscore import zscore_detect
 from orgpulse.domains.pharma import PHARMA
@@ -104,15 +105,22 @@ def run_tick(
         # divergence where a too-short stream read a free bootstrap SAFE. A violation
         # ANYWHERE — including in the baseline history — is DATA_QUALITY, and NO baseline is
         # persisted from corrupt data (a bad baseline would poison the next tick's detection).
-        reason = kpi_series_reason(kpi, series, min_len=baseline_days, bounds=bounds)
+        # Timeseries needs a full baseline window; threshold/deadline checks need only the latest.
+        min_len = baseline_days if spec.detection_mode is DetectionMode.TIMESERIES else 1
+        reason = kpi_series_reason(kpi, series, min_len=min_len, bounds=bounds)
         if reason is not None:
             findings.append(data_quality_finding(kpi, reason))
             continue
-        if spec.detection_mode is not DetectionMode.TIMESERIES:
-            raise NotImplementedError(
-                f"detection mode {spec.detection_mode.value!r} is wired in the banking build, not here"
-            )
         s = np.asarray(series, dtype=float)
+
+        # Non-timeseries modes assess the LATEST value directly — no baseline, no remembered state.
+        if spec.detection_mode is not DetectionMode.TIMESERIES:
+            r = (threshold_detect(s, spec.thresholds, kpi) if spec.detection_mode is DetectionMode.THRESHOLD
+                 else datemath_detect(s, spec.thresholds, kpi))
+            v = float(s[-1])
+            findings.append(KpiFinding(kpi=kpi, severity=r.severity.name, detail=r.detail,
+                                       latest_value=v if math.isfinite(v) else None))
+            continue
 
         # Established trailing baseline (long window, now validated finite + in-domain) becomes
         # the NEXT tick's baseline; kept longer than the detection window so CUSUM's ≥60-sample

@@ -8,6 +8,7 @@ import pandas as pd
 
 from orgpulse.core.domain import DetectionMode, Domain, KpiSpec
 from orgpulse.detect.orchestrator import detect_kpi, overall_severity
+from orgpulse.detect.rules import datemath_detect, min_history_for, threshold_detect
 from orgpulse.detect.types import Severity
 from orgpulse.detect.validation import MIN_ASSESSMENT_DAYS, kpi_domain_reason, kpi_series_reason
 from orgpulse.domains.pharma import PHARMA
@@ -69,21 +70,25 @@ def _kpi_finding(spec: KpiSpec, series, bounds: dict) -> KpiFinding:
     missing, ragged, non-numeric, or out-of-domain series can never be omitted or read as SAFE.
     Detection dispatches on the KPI's mode; only TIMESERIES is wired in this refactor.
     """
-    reason = kpi_series_reason(spec.name, series, min_len=MIN_ASSESSMENT_DAYS, bounds=bounds)
+    reason = kpi_series_reason(spec.name, series, min_len=min_history_for(spec.detection_mode), bounds=bounds)
     if reason is not None:
         return data_quality_finding(spec.name, reason)
-    if spec.detection_mode is not DetectionMode.TIMESERIES:
-        raise NotImplementedError(
-            f"detection mode {spec.detection_mode.value!r} is wired in the banking build, not here"
-        )
     s = np.asarray(series, dtype=float)
-    baseline, recent = s[:-30], s[-30:]
-    results = detect_kpi(baseline, recent, kpi=spec.name)  # returns DATA_QUALITY on non-finite data
-    sev = overall_severity(results)
-    driving = next((r for r in results if r.severity == sev), results[0])  # detail from the driving detector
-    v = float(recent[-1])
+    if spec.detection_mode is DetectionMode.TIMESERIES:
+        baseline, recent = s[:-30], s[-30:]
+        results = detect_kpi(baseline, recent, kpi=spec.name)  # returns DATA_QUALITY on non-finite data
+        sev = overall_severity(results)
+        sev_name = sev.name
+        detail = next((r for r in results if r.severity == sev), results[0]).detail  # driving detector
+    elif spec.detection_mode is DetectionMode.THRESHOLD:
+        r = threshold_detect(s, spec.thresholds, spec.name)
+        sev_name, detail = r.severity.name, r.detail
+    else:  # DATEMATH
+        r = datemath_detect(s, spec.thresholds, spec.name)
+        sev_name, detail = r.severity.name, r.detail
+    v = float(s[-1])
     latest = v if math.isfinite(v) else None
-    return KpiFinding(kpi=spec.name, severity=sev.name, detail=driving.detail, latest_value=latest)
+    return KpiFinding(kpi=spec.name, severity=sev_name, detail=detail, latest_value=latest)
 
 
 def detect_node(state: PipelineState, domain: Domain = PHARMA) -> DetectNodeOutput:
