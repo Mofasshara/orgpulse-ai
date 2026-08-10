@@ -316,3 +316,109 @@ def test_extract_raising_attributeerror_is_data_quality(tmp_path):
     # run/detect path
     det = detect_node({"streams": DEMO.generate(date(2026, 1, 1), 200, 0)}, dom)
     assert all(k.severity == "DATA_QUALITY" for k in det["kpi_findings"])
+
+
+# --- r16: OverflowError at the shared numeric gate + recommendation-callable hardening + atomic gen
+
+@pytest.mark.parametrize("mode", ["returns-huge", "raises-overflow"])
+def test_overflow_numeric_input_is_data_quality(mode, tmp_path):
+    """An int too large for float (10**10000 -> OverflowError) is corrupt numeric data: DATA_QUALITY,
+    never a crash — whether extract RETURNS it (caught at the shared kpi_series_reason gate) or
+    RAISES OverflowError (caught at the extract guard). Mutation: drop OverflowError from
+    kpi_series_reason/_latest_finite/the extract guards -> the run crashes."""
+    def extract(streams, kpi):
+        if mode == "raises-overflow":
+            float(10 ** 10000)   # raises OverflowError inside the domain extractor
+        return [10 ** 10000] * 200
+
+    dom = replace(DEMO, extract=extract)
+    det = detect_node({"streams": DEMO.generate(date(2026, 1, 1), 200, 0)}, dom)
+    assert all(k.severity == "DATA_QUALITY" for k in det["kpi_findings"])
+    f = run_tick(BaselineMemory(tmp_path / "m.json"), 0, out_root=tmp_path / "r",
+                 now="2026-01-01T00:00:00", offline=True, domain=dom)
+    assert all(k.severity == "DATA_QUALITY" for k in f.kpi_findings)
+
+
+def _raise_rec(*a, **k):
+    raise ValueError("recommend bug")
+
+
+@pytest.mark.parametrize("bad_offline", [_raise_rec, lambda kpis: None, lambda kpis: "garbage"])
+def test_offline_recommend_raise_or_malformed_never_empties_governed_stage(bad_offline, tmp_path):
+    """offline_recommend is a Domain callable. A RAISE must not crash the run (strict validation runs
+    only AFTER a return); a malformed/None return must not silently drop the governed stage. Every
+    flagged KPI gets a deterministic safe-fallback rec, and verify_run stays closed on completeness.
+    Mutation: remove the try/except or the missing-KPI backfill -> crash or empty recs."""
+    dom = replace(RULEONLY, offline_recommend=bad_offline)   # RULEONLY is all-CRITICAL
+    f = run_tick(BaselineMemory(tmp_path / "m.json"), 0, out_root=tmp_path / "r",
+                 now="2026-01-01T00:00:00", offline=True, domain=dom, baseline_days=1, base_days=1)
+    assert f.overall_severity == "CRITICAL"
+    assert {r.kpi for r in f.recommendations} >= {"cet1", "icaap_days"}   # not silently empty
+    assert all(isinstance(r.text, str) and r.text.strip() for r in f.recommendations)
+    ok, reason = data.verify_run(tmp_path / "r" / "latest")
+    assert ok is True, reason
+
+
+def _raise_dq(kpi):
+    raise ValueError("dq bug")
+
+
+@pytest.mark.parametrize("bad_dq", [_raise_dq, lambda kpi: None, lambda kpi: ""])
+def test_dq_recommendation_raise_or_blank_uses_safe_fallback(bad_dq, tmp_path):
+    """dq_recommendation is a Domain callable. A raise (crash) or a None/blank return (which made run
+    write Recommendation(text=None) and crashed the tick's report render) must fall back to the
+    deterministic default text — never crash, never a blank governed rec."""
+    def all_dq_extract(streams, kpi):
+        return np.full(200, np.nan)   # every KPI -> DATA_QUALITY
+
+    dom = replace(DEMO, extract=all_dq_extract, dq_recommendation=bad_dq)
+    f = run_tick(BaselineMemory(tmp_path / "m.json"), 0, out_root=tmp_path / "r",
+                 now="2026-01-01T00:00:00", offline=True, domain=dom)
+    assert f.overall_severity == "DATA_QUALITY"
+    assert f.recommendations
+    assert all(isinstance(r.text, str) and r.text.strip() for r in f.recommendations)
+    ok, reason = data.verify_run(tmp_path / "r" / "latest")
+    assert ok is True, reason
+
+
+def test_verify_run_rejects_flagged_run_with_empty_or_blank_recs():
+    """verify_run's trust boundary: an alerting artifact (WARNING/CRITICAL/DATA_QUALITY) with an
+    empty governed-recommendation stage, or a rec with a blank required field, must FAIL closed."""
+    from streamlit_app.data import _findings_schema_reason
+
+    def base(sev, recs):
+        return {"run_id": "r", "generated_at": "2026", "overall_severity": sev,
+                "kpi_findings": [], "forecast": {}, "recommendations": recs}
+
+    assert _findings_schema_reason(base("CRITICAL", [])) is not None          # empty governed stage
+    assert _findings_schema_reason(base("DATA_QUALITY", [])) is not None
+    assert _findings_schema_reason(base("SAFE", [])) is None                  # SAFE need not (not over-rejected)
+    blank = [{"kpi": "x", "text": "   ", "capa_frame": "f",
+              "review_status": "PENDING_HUMAN_REVIEW", "disclaimer": "d"}]
+    assert _findings_schema_reason(base("WARNING", blank)) is not None        # blank text field
+    good = [{"kpi": "x", "text": "do y", "capa_frame": "f",
+             "review_status": "PENDING_HUMAN_REVIEW", "disclaimer": "d"}]
+    assert _findings_schema_reason(base("CRITICAL", good)) is None            # valid flagged artifact
+
+
+def _raise_generate(start, days, seed):
+    raise RuntimeError("generate boom")
+
+
+@pytest.mark.parametrize("bad_generate", [
+    lambda start, days, seed: None,                    # None
+    lambda start, days, seed: {},                      # empty dict
+    lambda start, days, seed: {"x": np.zeros(3)},      # member is not a DataFrame
+    lambda start, days, seed: [1, 2, 3],               # not a dict
+    _raise_generate,                                    # raises
+])
+def test_malformed_generate_raises_and_leaves_no_partial_run_dir(bad_generate, tmp_path):
+    """A malformed generate() (wrong type / empty / non-DataFrame member / raises) must fail fast
+    with a clear error and leave NO partial, unverifiable durable run directory. Mutation: remove
+    the generate validation -> a partial dir (findings.json/report.md, no audit.jsonl) is written."""
+    dom = replace(DEMO, generate=bad_generate)
+    out = tmp_path / "runs"
+    with pytest.raises(ValueError):
+        run_tick(BaselineMemory(tmp_path / "m.json"), 0, out_root=out,
+                 now="2026-01-01T00:00:00", offline=True, domain=dom)
+    assert (not out.exists()) or list(out.iterdir()) == []

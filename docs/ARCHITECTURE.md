@@ -145,7 +145,11 @@ stack on them — `run_tick`, the public `run_pipeline`, the LangGraph pipeline,
 date validation, timezone normalization, and type/fail-closed guarding (a domain `hero_frame` or
 `extract` that returns the wrong type or raises yields DATA_QUALITY / no forecast, never a crash),
 the generic `streams` state, the domain-agnostic
-verifier, the domain-hero references, the `Domain` config validation — including THRESHOLD/DATEMATH
+verifier (which also rejects an alerting artifact whose governed-recommendation stage is empty or
+blank), the OverflowError-safe shared numeric gate, the guarded recommendation callables (a raising
+or malformed `offline_recommend`/`dq_recommendation` never crashes and never empties the governed
+stage — a deterministic safe fallback is used), the atomic tick write (a malformed `generate()`
+leaves no partial run directory), the domain-hero references, the `Domain` config validation — including THRESHOLD/DATEMATH
 threshold finiteness, strict band reachability (equal/inverted cutoffs rejected so no severity is
 unreachable) and unknown-key rejection, the per-mode detection dispatch, the rule detectors'
 standalone fail-safe on malformed/non-finite input — empty/ragged/2-D/non-numeric/0-D/NaN/inf all

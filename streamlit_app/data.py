@@ -164,10 +164,19 @@ def _findings_schema_reason(fj: dict) -> str | None:
     if not isinstance(recs, list):
         return "recommendations is not a list"
     for r in recs:
+        # Every governed-recommendation field must be a NON-EMPTY string — a blank text/frame is a
+        # semantically hollow rec (a malformed domain callable could produce one), not a valid one.
         if not isinstance(r, dict) or not all(
-            isinstance(r.get(x), str) for x in ("kpi", "text", "capa_frame", "review_status", "disclaimer")
+            isinstance(r.get(x), str) and r.get(x).strip()
+            for x in ("kpi", "text", "capa_frame", "review_status", "disclaimer")
         ):
-            return "a recommendation is missing a required string field"
+            return "a recommendation is missing a required non-empty string field"
+    # A flagged run MUST carry at least one governed recommendation. An alerting artifact
+    # (WARNING/CRITICAL/DATA_QUALITY) with an empty recommendation stage is semantically
+    # incomplete — the governance step silently vanished — so fail closed.
+    sev = fj.get("overall_severity")
+    if sev in ("WARNING", "CRITICAL", "DATA_QUALITY") and not recs:
+        return f"overall_severity is {sev} but there are no governed recommendations"
     return None
 
 

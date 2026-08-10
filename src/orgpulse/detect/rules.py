@@ -32,8 +32,10 @@ def _latest_finite(values) -> tuple[float | None, str | None]:
     """
     try:
         arr = np.asarray(values, dtype=float)
-    except (ValueError, TypeError):
-        return None, "value is non-numeric or ragged; cannot assess"
+    except (ValueError, TypeError, OverflowError):
+        # OverflowError: an int too large to convert to float (e.g. 10**10000) is corrupt numeric
+        # data, not a valid latest value — fail safe like any other malformed input.
+        return None, "value is non-numeric, ragged, or out-of-range; cannot assess"
     if arr.ndim != 1:
         return None, f"expected a 1-D series, got a {arr.ndim}-D array; cannot assess"
     if arr.size == 0:

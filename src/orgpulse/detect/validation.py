@@ -100,8 +100,10 @@ def kpi_series_reason(kpi: str, series, *, min_len: int | None = None, bounds: d
     """
     try:
         a = np.asarray(series, dtype=float)
-    except (ValueError, TypeError):
-        return f"unusable input (non-numeric or ragged) for {kpi}"
+    except (ValueError, TypeError, OverflowError):
+        # OverflowError: an int too large to convert to float (e.g. 10**10000). Corrupt numeric
+        # data -> DATA_QUALITY, not a crash. Caught here at the SHARED gate so every consumer agrees.
+        return f"unusable input (non-numeric, ragged, or out-of-range) for {kpi}"
     if a.ndim != 1:
         return f"unusable input ({a.ndim}-D, expected 1-D) for {kpi}"
     if min_len is not None and len(a) < min_len:

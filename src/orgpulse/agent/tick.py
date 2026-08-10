@@ -8,6 +8,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 from orgpulse.agent.baseline_memory import BaselineMemory
 from orgpulse.core.domain import DetectionMode, Domain
@@ -91,7 +92,20 @@ def run_tick(
         raise ValueError(f"base_days must be >= 1 (need at least the latest value), got {base_days}")
     days = base_days + tick_number * days_per_period
     start = date(2026, 1, 1)
-    streams = domain.generate(start, days, seed)
+    # generate() is a Domain-supplied callable. Validate its output BEFORE any assessment or writing
+    # so a malformed generator (returns None/non-dict, empty, or non-DataFrame members, or raises)
+    # fails fast with a clear error and leaves NO partial, unverifiable run directory behind.
+    try:
+        streams = domain.generate(start, days, seed)
+    except Exception as exc:
+        raise ValueError(f"domain {domain.name!r} generate() failed: {exc}") from exc
+    if not isinstance(streams, dict) or not streams or not all(
+        isinstance(df, pd.DataFrame) for df in streams.values()
+    ):
+        raise ValueError(
+            f"domain {domain.name!r} generate() must return a non-empty dict of DataFrames, "
+            f"got {type(streams).__name__}"
+        )
     bounds = domain.bounds()
 
     remembered = memory.load()
@@ -107,7 +121,7 @@ def run_tick(
         # (missing stream/column, ragged data) is DATA_QUALITY, not a crash.
         try:
             series = domain.extract(streams, kpi)
-        except (KeyError, ValueError, TypeError, IndexError, AttributeError) as exc:
+        except (KeyError, ValueError, TypeError, IndexError, AttributeError, OverflowError) as exc:
             findings.append(data_quality_finding(kpi, f"unusable input ({exc})"))
             continue
         # Validate the WHOLE ingested series through the shared gate (numeric, 1-D, >= a full
@@ -203,6 +217,12 @@ def run_tick(
         ).encode("utf-8")
     ).hexdigest()
 
+    # Article 12 lineage input hash of the actual input frames. Computed ONCE here (streams is
+    # validated above) — never inside _write, so the write path can't fail on it after creating files.
+    input_data_hash = hashlib.sha256(
+        "".join(df.to_csv(index=False) for df in streams.values()).encode("utf-8")
+    ).hexdigest()
+
     def _write(out_dir: Path, *, is_latest: bool) -> None:
         # Timestamped run dirs are durable, append-only history: never overwrite one (a
         # same-second, same-tick re-run would otherwise silently destroy a prior run).
@@ -212,18 +232,16 @@ def run_tick(
                 f"refusing to overwrite existing run directory {out_dir} "
                 "(durable run history); use a distinct timestamp or tick_number"
             )
-        out_dir.mkdir(parents=True, exist_ok=True)
+        # Compute ALL content + integrity hashes BEFORE creating the directory or writing any file,
+        # so a failure can never leave a partial, unverifiable run dir (findings.json/report.md
+        # without a matching audit.jsonl).
         fj = json.dumps(findings_obj.to_json_dict(), indent=2, allow_nan=False)
         report_text = render_report(findings_obj)
-        (out_dir / "findings.json").write_text(fj)
-        (out_dir / "report.md").write_text(report_text)
-        # Article 12 lineage: real inputs (seed + params + input-frame hash) + output integrity
-        # hashes (findings + report), so a decision is genuinely reproducible.
         findings_hash = hashlib.sha256(fj.encode("utf-8")).hexdigest()
         report_hash = hashlib.sha256(report_text.encode("utf-8")).hexdigest()
-        input_data_hash = hashlib.sha256(
-            "".join(df.to_csv(index=False) for df in streams.values()).encode("utf-8")
-        ).hexdigest()
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "findings.json").write_text(fj)
+        (out_dir / "report.md").write_text(report_text)
         # Each run dir holds exactly THIS run: clear any prior audit log (the reusable
         # `latest/` dir would otherwise accumulate across ticks and diverge from
         # findings.json/report.md). Durable per-run records live in the timestamped dirs.

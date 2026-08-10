@@ -6,7 +6,13 @@ from typing import TypedDict
 import numpy as np
 import pandas as pd
 
-from orgpulse.core.domain import DetectionMode, Domain, KpiSpec
+from orgpulse.core.domain import (
+    DetectionMode,
+    Domain,
+    KpiSpec,
+    _default_dq_recommendation,
+    _default_offline_recommend,
+)
 from orgpulse.detect.orchestrator import detect_kpi, overall_severity
 from orgpulse.detect.rules import datemath_detect, min_history_for, threshold_detect
 from orgpulse.detect.types import Severity
@@ -107,7 +113,7 @@ def detect_node(state: PipelineState, domain: Domain = PHARMA) -> DetectNodeOutp
     for spec in domain.kpi_specs:
         try:
             series = domain.extract(streams, spec.name)
-        except (KeyError, ValueError, TypeError, IndexError, AttributeError):
+        except (KeyError, ValueError, TypeError, IndexError, AttributeError, OverflowError):
             findings.append(data_quality_finding(spec.name, "unusable input (missing stream/column or malformed data)"))
             continue
         findings.append(_kpi_finding(spec, series, bounds))  # always returns a finding (never None)
@@ -300,8 +306,15 @@ def recommendation_node(state: PipelineState, llm: LLMClient, domain: Domain = P
             prompt_lines.append(f"- {kpi}")
         prompt = "\n".join(prompt_lines)
 
-        rec_dicts = llm.recommend(domain.recommend_system, prompt, kpis=anomaly_kpis)
+        # The recommend call runs a Domain-supplied callable (offline_recommend) / a not-runtime-
+        # schema-guaranteed online LLM. A RAISE here must not crash the run (the strict per-item
+        # validation below only runs AFTER a successful return, so it can't catch an exception).
+        try:
+            rec_dicts = llm.recommend(domain.recommend_system, prompt, kpis=anomaly_kpis)
+        except Exception:
+            rec_dicts = []
         requested = set(anomaly_kpis)
+        seen: set[str] = set()
         for rec_dict in rec_dicts if isinstance(rec_dicts, list) else []:
             # Be strict about the LLM's output (the online Claude path is not schema-guaranteed
             # at runtime): the item must be a dict whose kpi is one we REQUESTED and whose text
@@ -322,14 +335,37 @@ def recommendation_node(state: PipelineState, llm: LLMClient, domain: Domain = P
                     review_status="PENDING_HUMAN_REVIEW",
                 )
             )
+            seen.add(kpi)
 
-    # Data-quality KPIs -> deterministic data-quality recommendation (no LLM)
+        # A flagged anomaly KPI MUST carry a governed recommendation. Any that the LLM/stub failed
+        # to produce a VALID one for (raise, malformed, or invented-away) gets a deterministic,
+        # domain-neutral safe fallback — so a WARNING/CRITICAL run can never emit an EMPTY governed
+        # stage (which verify_run would otherwise accept as a valid, semantically-hollow artifact).
+        missing = [k for k in anomaly_kpis if k not in seen]
+        for d in _default_offline_recommend(missing):
+            recommendations.append(
+                Recommendation(
+                    kpi=d["kpi"], text=d["text"], capa_frame=d["capa_frame"],
+                    disclaimer=HUMAN_OVERSIGHT_DISCLAIMER,
+                    review_status="PENDING_HUMAN_REVIEW",
+                )
+            )
+
+    # Data-quality KPIs -> deterministic data-quality recommendation (no LLM). dq_recommendation is
+    # a Domain callable: a raise or a non-string/empty return must not crash or write a blank
+    # governed rec — fall back to the deterministic default text (SAFE is earned, never a fallback).
     for kpi in dq_kpis:
+        try:
+            dq_text = domain.dq_recommendation(kpi)
+        except Exception:
+            dq_text = None
+        if not (isinstance(dq_text, str) and dq_text.strip()):
+            dq_text = _default_dq_recommendation(kpi)
         recommendations.append(
             Recommendation(
                 kpi=kpi,
                 capa_frame="DATA-QUALITY",
-                text=domain.dq_recommendation(kpi),
+                text=dq_text,
                 disclaimer=HUMAN_OVERSIGHT_DISCLAIMER,
             )
         )

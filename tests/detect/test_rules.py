@@ -75,6 +75,7 @@ _MALFORMED = [
     ([[12.0, 10.0]], "2-D array"),
     (10.0, "0-D scalar"),
     (None, "None"),
+    ([10 ** 10000], "int too large to convert to float (OverflowError)"),
 ]
 
 
