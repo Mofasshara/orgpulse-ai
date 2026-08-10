@@ -142,7 +142,9 @@ non-timeseries modes need only the latest value, not a full baseline.
 stack on them — `run_tick`, the public `run_pipeline`, the LangGraph pipeline, the hero forecast,
 `verify_run`, and the offline framing — with **no engine changes**. Each test is
 **mutation-constrained**: reverting any single fix (the detect/forecast parity guard, the hero-frame
-date validation and timezone normalization, the generic `streams` state, the domain-agnostic
+date validation, timezone normalization, and type/fail-closed guarding (a domain `hero_frame` or
+`extract` that returns the wrong type or raises yields DATA_QUALITY / no forecast, never a crash),
+the generic `streams` state, the domain-agnostic
 verifier, the domain-hero references, the `Domain` config validation — including THRESHOLD/DATEMATH
 threshold finiteness, strict band reachability (equal/inverted cutoffs rejected so no severity is
 unreachable) and unknown-key rejection, the per-mode detection dispatch, the rule detectors'

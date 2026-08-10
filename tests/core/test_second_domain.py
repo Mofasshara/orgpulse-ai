@@ -10,6 +10,7 @@ from datetime import date
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from orgpulse.agent.baseline_memory import BaselineMemory
 from orgpulse.agent.tick import run_tick
@@ -270,3 +271,48 @@ def test_forecast_normalizes_timezone_aware_hero_dates(tmp_path):
     assert "widget_rate" in f.forecast                                  # forecast produced
     ok, reason = data.verify_run(tmp_path / "r" / "latest")
     assert ok is True, reason
+
+
+@pytest.mark.parametrize("bad_hero_frame", [
+    lambda s: None,                     # wrong type: None
+    lambda s: np.zeros(10),             # wrong type: ndarray (no .columns)
+    lambda s: {"ds": [1], "y": [2]},    # wrong type: dict (no .columns)
+])
+def test_forecast_fails_closed_on_malformed_hero_frame_return(bad_hero_frame, tmp_path):
+    """hero_frame is domain-supplied; a buggy one returning the WRONG TYPE (not a DataFrame) must
+    yield NO forecast and NO crash. forecast_node validated the frame's CONTENTS but assumed it WAS
+    a DataFrame — `.columns` on None/ndarray/dict raises AttributeError, which the except didn't
+    catch. Mutation: drop the isinstance guard AND remove AttributeError from the except -> crash."""
+    dom = replace(DEMO, hero_frame=bad_hero_frame)
+    f = run_tick(BaselineMemory(tmp_path / "m.json"), 0, out_root=tmp_path / "r",
+                 now="2026-01-01T00:00:00", offline=True, domain=dom)   # must NOT raise
+    assert f.forecast == {}
+
+
+def test_forecast_fails_closed_when_hero_frame_raises(tmp_path):
+    """A hero_frame that RAISES while building (here AttributeError) must fail closed, not crash."""
+    def boom(streams):
+        raise AttributeError("hero_frame bug")
+
+    dom = replace(DEMO, hero_frame=boom)
+    f = run_tick(BaselineMemory(tmp_path / "m.json"), 0, out_root=tmp_path / "r",
+                 now="2026-01-01T00:00:00", offline=True, domain=dom)   # must NOT raise
+    assert f.forecast == {}
+
+
+def test_extract_raising_attributeerror_is_data_quality(tmp_path):
+    """extract is domain-supplied too: if it raises AttributeError (a wrong-shape access), the KPI
+    is DATA_QUALITY, never a crash — via both the tick loop and detect_node. Mutation: remove
+    AttributeError from either extract guard -> the run crashes."""
+    def bad_extract(streams, kpi):
+        raise AttributeError("extract bug")
+
+    dom = replace(DEMO, extract=bad_extract)
+    # tick path
+    f = run_tick(BaselineMemory(tmp_path / "m.json"), 0, out_root=tmp_path / "r",
+                 now="2026-01-01T00:00:00", offline=True, domain=dom)
+    assert {k.kpi for k in f.kpi_findings} == {"widget_rate", "queue_len"}
+    assert all(k.severity == "DATA_QUALITY" for k in f.kpi_findings)
+    # run/detect path
+    det = detect_node({"streams": DEMO.generate(date(2026, 1, 1), 200, 0)}, dom)
+    assert all(k.severity == "DATA_QUALITY" for k in det["kpi_findings"])

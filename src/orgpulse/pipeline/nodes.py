@@ -107,7 +107,7 @@ def detect_node(state: PipelineState, domain: Domain = PHARMA) -> DetectNodeOutp
     for spec in domain.kpi_specs:
         try:
             series = domain.extract(streams, spec.name)
-        except (KeyError, ValueError, TypeError, IndexError):
+        except (KeyError, ValueError, TypeError, IndexError, AttributeError):
             findings.append(data_quality_finding(spec.name, "unusable input (missing stream/column or malformed data)"))
             continue
         findings.append(_kpi_finding(spec, series, bounds))  # always returns a finding (never None)
@@ -158,6 +158,11 @@ def forecast_node(state: PipelineState, domain: Domain = PHARMA) -> ForecastNode
         streams = state.get("streams") or state
         try:
             daily_df = domain.hero_frame(streams)
+            # hero_frame is domain-supplied: a buggy one may return the WRONG TYPE (None, an ndarray,
+            # a dict) or raise while building. Fail closed to "no forecast", never crash the run.
+            # (AttributeError is caught below because `.columns`/`.dt` on a non-DataFrame raises it.)
+            if not isinstance(daily_df, pd.DataFrame):
+                return {"forecast": forecast_result}
             if "ds" not in daily_df.columns or "y" not in daily_df.columns:
                 return {"forecast": forecast_result}
             ds = pd.to_datetime(daily_df["ds"], errors="coerce")
@@ -171,7 +176,9 @@ def forecast_node(state: PipelineState, domain: Domain = PHARMA) -> ForecastNode
             if getattr(ds.dt, "tz", None) is not None:
                 daily_df = daily_df.assign(ds=ds.dt.tz_convert("UTC").dt.tz_localize(None))
             y = daily_df["y"].to_numpy(dtype=float)
-        except (KeyError, ValueError, TypeError):
+        except (KeyError, ValueError, TypeError, AttributeError, IndexError):
+            # AttributeError: a non-DataFrame return reaching `.columns`/`.dt`, or a domain
+            # hero_frame that raises it while building. All fail closed to "no forecast".
             return {"forecast": forecast_result}
         if kpi_series_reason(hero, y, min_len=MIN_ASSESSMENT_DAYS, bounds=domain.bounds()) is not None:
             return {"forecast": forecast_result}

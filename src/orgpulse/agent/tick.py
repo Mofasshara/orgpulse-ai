@@ -107,7 +107,7 @@ def run_tick(
         # (missing stream/column, ragged data) is DATA_QUALITY, not a crash.
         try:
             series = domain.extract(streams, kpi)
-        except (KeyError, ValueError, TypeError, IndexError) as exc:
+        except (KeyError, ValueError, TypeError, IndexError, AttributeError) as exc:
             findings.append(data_quality_finding(kpi, f"unusable input ({exc})"))
             continue
         # Validate the WHOLE ingested series through the shared gate (numeric, 1-D, >= a full
