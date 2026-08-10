@@ -94,6 +94,38 @@ def test_datemath_detect_fails_safe_on_malformed_input(bad, _desc):
     _assert_dq(datemath_detect(bad, None, "icaap"))
 
 
+def test_scalar_numeric_gates_fail_safe_on_overflow():
+    """The scalar validators and the detectors that consume a remembered baseline must treat an
+    int-too-large-for-float as unusable (False / DATA_QUALITY), never crash standalone. Mutation:
+    drop OverflowError from is_finite_scalar -> these raise."""
+    from orgpulse.detect.validation import (
+        baseline_domain_feasible, finite_nonneg, finite_positive_order, is_finite_scalar,
+    )
+    from orgpulse.detect.zscore import zscore_detect
+    from orgpulse.detect.cusum import cusum_detect
+    from orgpulse.detect.baseline import Baseline
+
+    huge = 10 ** 10000
+    assert is_finite_scalar(huge) is False
+    assert finite_nonneg(huge) is False
+    assert finite_positive_order(1.0, huge) is False
+    assert baseline_domain_feasible("x", huge, 1.0, {"x": (0.0, None)}) is False
+    assert zscore_detect(1.0, Baseline(mean=huge, std=1.0, n=120), kpi="x").severity is Severity.DATA_QUALITY
+    assert cusum_detect([1.0] * 120, Baseline(mean=huge, std=1.0, n=120), kpi="x").severity is Severity.DATA_QUALITY
+
+
+def test_baseline_memory_overflow_value_is_clear_operator_error(tmp_path):
+    """Valid JSON whose baseline mean is an int too large for float must produce the clear
+    operator-facing 'corrupt or unreadable' ValueError, not a raw OverflowError. Mutation: drop
+    OverflowError from the load() except."""
+    from orgpulse.agent.baseline_memory import BaselineMemory
+
+    p = tmp_path / "m.json"
+    p.write_text('{"x": {"mean": 1' + "0" * 1001 + ', "std": 1, "n": 120}}')  # ~10**1001
+    with pytest.raises(ValueError, match="corrupt or unreadable"):
+        BaselineMemory(p).load()
+
+
 def test_detect_kpi_fails_safe_on_overflow_standalone():
     """The timeseries orchestrator must fail to DATA_QUALITY on an int-too-large-for-float, standalone
     too (via the shared ensure_1d_finite gate converting OverflowError -> ValueError, which every

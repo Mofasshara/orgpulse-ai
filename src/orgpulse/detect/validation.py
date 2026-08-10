@@ -27,30 +27,33 @@ def ensure_1d_finite(values, name: str) -> np.ndarray:
 
 
 def is_finite_scalar(x) -> bool:
+    # OverflowError: an int too large for float (e.g. 10**10000) is NOT a finite scalar; it must
+    # read False, not crash. This is the shared scalar gate — baseline_is_usable / finite_* /
+    # baseline_domain_feasible all funnel through it, so a corrupt scalar baseline fails safe here.
     try:
         return bool(np.isfinite(float(x)))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return False
 
 
 def baseline_is_usable(mean, std, n) -> bool:
     try:
         return is_finite_scalar(mean) and is_finite_scalar(std) and float(std) > 0.0 and int(n) >= 1
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return False
 
 
 def finite_positive_order(warn, crit) -> bool:
     try:
         return is_finite_scalar(warn) and is_finite_scalar(crit) and 0.0 < float(warn) < float(crit)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return False
 
 
 def finite_nonneg(x) -> bool:
     try:
         return is_finite_scalar(x) and float(x) >= 0.0
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return False
 
 
@@ -73,7 +76,12 @@ def kpi_domain_reason(kpi: str, arr: np.ndarray, bounds: dict | None = None) -> 
     if kpi_bounds is None:
         return None
     lo, hi = kpi_bounds
-    a = np.asarray(arr, dtype=float)
+    try:
+        a = np.asarray(arr, dtype=float)
+    except (ValueError, TypeError, OverflowError):
+        # Standalone-safe: a non-numeric/overflow-sized array is out-of-domain by definition, not
+        # a crash (this helper is also reachable directly, not only after the finite check).
+        return f"unusable input (non-numeric or out-of-range) for {kpi}"
     if lo is not None and np.any(a < lo):
         return f"value below domain minimum {lo} for {kpi}"
     if hi is not None and np.any(a > hi):

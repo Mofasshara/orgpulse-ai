@@ -150,6 +150,10 @@ def _findings_schema_reason(fj: dict) -> str | None:
             hh = hero.get(h)
             if not isinstance(hh, dict) or not all(_is_num(hh.get(b)) for b in ("yhat", "lower", "upper")):
                 return f"forecast.{hero_key}.{h} missing finite yhat/lower/upper"
+            if not (hh["lower"] <= hh["yhat"] <= hh["upper"]):
+                # The dashboard plots this as an interval band around the point — a producer bug
+                # that emits lower > yhat or upper < yhat is a contradictory artifact; fail closed.
+                return f"forecast.{hero_key}.{h} bounds violate lower <= yhat <= upper"
         # The dashboard dereferences and FORMATS the calibration block — validate it too.
         cal = hero.get("calibration")
         if cal is not None:
@@ -177,6 +181,26 @@ def _findings_schema_reason(fj: dict) -> str | None:
     sev = fj.get("overall_severity")
     if sev in ("WARNING", "CRITICAL", "DATA_QUALITY") and not recs:
         return f"overall_severity is {sev} but there are no governed recommendations"
+
+    # Cross-field (relational) consistency. A hash-consistent artifact can still be internally
+    # CONTRADICTORY from a producer bug — the dashboard renders these fields as one coherent whole,
+    # so reject combinations the engine could never emit (not covered by the unkeyed-chain limit).
+    kfs_sevs = [k.get("severity") for k in kfs]
+    if kfs_sevs:
+        # overall_severity is derived: DATA_QUALITY dominates, else the max of SAFE<WARNING<CRITICAL.
+        _rank = {"SAFE": 0, "WARNING": 1, "CRITICAL": 2}
+        expected_overall = "DATA_QUALITY" if "DATA_QUALITY" in kfs_sevs \
+            else max(kfs_sevs, key=lambda s: _rank.get(s, -1))
+        if sev != expected_overall:
+            return f"overall_severity {sev!r} disagrees with the KPI findings (expected {expected_overall!r})"
+    # The alert fires exactly when the run is CRITICAL or DATA_QUALITY.
+    if "alert" in fj and fj["alert"] != (sev in ("CRITICAL", "DATA_QUALITY")):
+        return f"alert {fj['alert']!r} disagrees with overall_severity {sev!r}"
+    # Every recommendation must reference an ASSESSED KPI — no invented entities in governed output.
+    assessed = {k.get("kpi") for k in kfs}
+    for r in recs:
+        if r.get("kpi") not in assessed:
+            return f"recommendation references KPI {r.get('kpi')!r} not among the assessed KPIs"
     return None
 
 

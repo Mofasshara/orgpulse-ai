@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
+import shutil
 from dataclasses import asdict
 from datetime import date, datetime
 from pathlib import Path
@@ -121,7 +123,9 @@ def run_tick(
         # (missing stream/column, ragged data) is DATA_QUALITY, not a crash.
         try:
             series = domain.extract(streams, kpi)
-        except (KeyError, ValueError, TypeError, IndexError, AttributeError, OverflowError) as exc:
+        except Exception as exc:
+            # extract is UNTRUSTED domain code: ANY exception (not just shape/conversion errors)
+            # means DATA_QUALITY, never a crash of the autonomous tick. BaseException escapes.
             findings.append(data_quality_finding(kpi, f"unusable input ({exc})"))
             continue
         # Validate the WHOLE ingested series through the shared gate (numeric, 1-D, >= a full
@@ -232,36 +236,46 @@ def run_tick(
                 f"refusing to overwrite existing run directory {out_dir} "
                 "(durable run history); use a distinct timestamp or tick_number"
             )
-        # Compute ALL content + integrity hashes BEFORE creating the directory or writing any file,
-        # so a failure can never leave a partial, unverifiable run dir (findings.json/report.md
-        # without a matching audit.jsonl).
+        # Compute ALL content + integrity hashes first.
         fj = json.dumps(findings_obj.to_json_dict(), indent=2, allow_nan=False)
         report_text = render_report(findings_obj)
         findings_hash = hashlib.sha256(fj.encode("utf-8")).hexdigest()
         report_hash = hashlib.sha256(report_text.encode("utf-8")).hexdigest()
-        out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / "findings.json").write_text(fj)
-        (out_dir / "report.md").write_text(report_text)
-        # Each run dir holds exactly THIS run: clear any prior audit log (the reusable
-        # `latest/` dir would otherwise accumulate across ticks and diverge from
-        # findings.json/report.md). Durable per-run records live in the timestamped dirs.
-        (out_dir / "audit.jsonl").unlink(missing_ok=True)
-        audit = HashChainedAuditLog(out_dir / "audit.jsonl")
-        audit.append(
-            "run",
-            {"overall_severity": overall.name, "alert": findings_obj.alert, "generated_at": generated_at,
-             "model": model, "offline": offline, "findings_hash": findings_hash,
-             "report_hash": report_hash, "input_data_hash": input_data_hash,
-             "baseline_input_hash": baseline_input_hash,
-             "seed": seed, "base_days": base_days, "days_per_period": days_per_period,
-             "baseline_days": baseline_days, "tick_number": tick_number, "used_bootstrap": used_bootstrap},
-            trace_id=run_id, timestamp=generated_at,
-        )
-        for i, rec in enumerate(findings_obj.recommendations):
+
+        # Write into a PRIVATE staging dir, then atomically swap it into place. This makes the
+        # durable run directory all-or-nothing: a mid-write failure (e.g. an OSError on the 2nd
+        # file, a full disk) removes the staging dir and leaves NO partial, unverifiable run dir.
+        staging = out_dir.parent / f".{out_dir.name}.staging-{os.getpid()}"
+        if staging.exists():
+            shutil.rmtree(staging)
+        staging.mkdir(parents=True, exist_ok=True)
+        try:
+            (staging / "findings.json").write_text(fj)
+            (staging / "report.md").write_text(report_text)
+            audit = HashChainedAuditLog(staging / "audit.jsonl")
             audit.append(
-                "recommendation", {**asdict(rec), "model": model, "findings_hash": findings_hash},
-                trace_id=f"{run_id}:{rec.kpi}:{i}", timestamp=generated_at,
+                "run",
+                {"overall_severity": overall.name, "alert": findings_obj.alert, "generated_at": generated_at,
+                 "model": model, "offline": offline, "findings_hash": findings_hash,
+                 "report_hash": report_hash, "input_data_hash": input_data_hash,
+                 "baseline_input_hash": baseline_input_hash,
+                 "seed": seed, "base_days": base_days, "days_per_period": days_per_period,
+                 "baseline_days": baseline_days, "tick_number": tick_number, "used_bootstrap": used_bootstrap},
+                trace_id=run_id, timestamp=generated_at,
             )
+            for i, rec in enumerate(findings_obj.recommendations):
+                audit.append(
+                    "recommendation", {**asdict(rec), "model": model, "findings_hash": findings_hash},
+                    trace_id=f"{run_id}:{rec.kpi}:{i}", timestamp=generated_at,
+                )
+        except BaseException:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+        # Swap in. The durable timestamped dir does not exist here (guarded above), so os.replace is
+        # a single atomic rename. `latest/` is a reusable mirror: replace its contents wholesale.
+        if out_dir.exists():
+            shutil.rmtree(out_dir)
+        os.replace(staging, out_dir)
 
     # Run-dir name includes the tick number so two ticks that share a wall-clock second
     # (default timestamps have only second precision) don't collide onto the same directory.

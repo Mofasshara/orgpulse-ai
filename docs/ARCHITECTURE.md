@@ -143,17 +143,22 @@ stack on them — `run_tick`, the public `run_pipeline`, the LangGraph pipeline,
 `verify_run`, and the offline framing — with **no engine changes**. Each test is
 **mutation-constrained**: reverting any single fix (the detect/forecast parity guard, the hero-frame
 date validation, timezone normalization and hero-`y` float coercion (a numeric-string/object y is
-normalized back into the frame Prophet consumes), and type/fail-closed guarding (a domain
-`hero_frame` or `extract` that returns the wrong type or raises yields DATA_QUALITY / no forecast,
-never a crash), the generic `streams` state, the domain-agnostic
+normalized back into the frame Prophet consumes), and type/fail-closed guarding (every UNTRUSTED
+domain callable — `extract`, `hero_frame` — is wrapped in a broad `except Exception` so ANY failure,
+not just shape/conversion errors, yields DATA_QUALITY / no forecast, never a crash; only
+`BaseException`/`KeyboardInterrupt` escapes), the generic `streams` state, the domain-agnostic
 verifier (which also rejects an alerting artifact whose governed-recommendation stage is empty or
-blank), the OverflowError-safe numeric gates (the rule detectors' `_latest_finite`, the shared
-`kpi_series_reason`, the timeseries `ensure_1d_finite`, and the forecast y-coercion all fail a huge
-int to DATA_QUALITY), the guarded analyst + recommendation callables (a raising or malformed
-`llm.analyze`/`offline_recommend`/`dq_recommendation` never crashes and never empties the governed
-stage — a deterministic safe fallback is used), the atomic tick write (a malformed `generate()`
-leaves no partial run directory), the string-typed `Domain` framing fields, the domain-hero
-references, the `Domain` config validation — including THRESHOLD/DATEMATH
+blank, OR that is internally CONTRADICTORY — overall_severity disagreeing with the KPI findings,
+`alert` disagreeing with policy, a recommendation for an unassessed KPI, or forecast bounds violating
+lower ≤ yhat ≤ upper), the OverflowError-safe numeric gates (the rule detectors' `_latest_finite`,
+the shared `kpi_series_reason`, the timeseries `ensure_1d_finite`, the forecast y-coercion, the
+scalar `is_finite_scalar` family, and `BaselineMemory` loading all fail a huge int to
+DATA_QUALITY / False / a clear operator error), the guarded analyst + recommendation callables (a
+raising or malformed `llm.analyze`/`offline_recommend`/`dq_recommendation` never crashes and never
+empties the governed stage — a deterministic safe fallback is used), the atomic tick write (staged
+in a private dir and swapped in, so neither a malformed `generate()` NOR a mid-write filesystem
+failure leaves a partial run directory), the string-typed `Domain` framing fields and non-empty
+KPI-name validation, the domain-hero references, the `Domain` config validation — including THRESHOLD/DATEMATH
 threshold finiteness, strict band reachability (equal/inverted cutoffs rejected so no severity is
 unreachable) and unknown-key rejection, the per-mode detection dispatch, the rule detectors'
 standalone fail-safe on malformed/non-finite input — empty/ragged/2-D/non-numeric/0-D/NaN/inf all

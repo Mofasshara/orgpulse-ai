@@ -30,7 +30,9 @@ class BaselineMemory:
                 kpi: Baseline(mean=float(v["mean"]), std=float(v["std"]), n=int(v["n"]))
                 for kpi, v in raw.items()
             }
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError, OverflowError) as exc:
+            # OverflowError: valid JSON whose mean/std is an int too large for float (e.g. 10**1000).
+            # Corrupt persisted STATE -> the same clear operator-facing error, not a raw crash.
             raise ValueError(
                 f"baseline memory at {self.path} is corrupt or unreadable ({exc}); "
                 "delete it to re-bootstrap, or restore a valid copy"

@@ -95,6 +95,12 @@ class Domain:
                 f"domain {self.name!r} must declare exactly one hero KPI (is_hero=True), got {len(heroes)}"
             )
         names = [k.name for k in self.kpi_specs]
+        # A KPI name is used as a dict key, a report/label string (name.replace(...)), and a
+        # recommendation identifier. A non-string or empty name would crash rendering or write an
+        # unusable governed rec — reject at construction, per the "malformed config fails here" contract.
+        for nm in names:
+            if not isinstance(nm, str) or not nm.strip():
+                raise ValueError(f"domain {self.name!r}: KPI name must be a non-empty string, got {nm!r}")
         if len(names) != len(set(names)):
             raise ValueError(f"domain {self.name!r} has duplicate KPI names: {names}")
         for k in self.kpi_specs:

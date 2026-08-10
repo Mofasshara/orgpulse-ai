@@ -113,8 +113,11 @@ def detect_node(state: PipelineState, domain: Domain = PHARMA) -> DetectNodeOutp
     for spec in domain.kpi_specs:
         try:
             series = domain.extract(streams, spec.name)
-        except (KeyError, ValueError, TypeError, IndexError, AttributeError, OverflowError):
-            findings.append(data_quality_finding(spec.name, "unusable input (missing stream/column or malformed data)"))
+        except Exception:
+            # extract is UNTRUSTED domain code: ANY exception (missing stream, wrong shape, overflow,
+            # or an arbitrary RuntimeError/OSError from inside it) means "this KPI is unusable" ->
+            # DATA_QUALITY, never a crash. Only BaseException (KeyboardInterrupt/SystemExit) escapes.
+            findings.append(data_quality_finding(spec.name, "unusable input (extract failed)"))
             continue
         findings.append(_kpi_finding(spec, series, bounds))  # always returns a finding (never None)
 
@@ -188,10 +191,11 @@ def forecast_node(state: PipelineState, domain: Domain = PHARMA) -> ForecastNode
             # floats. (Pharma's y is already float64, so the values are identical -> byte-identical.)
             y = daily_df["y"].to_numpy(dtype=float)
             daily_df = daily_df.assign(y=y)
-        except (KeyError, ValueError, TypeError, AttributeError, IndexError, OverflowError):
-            # AttributeError: a non-DataFrame return reaching `.columns`/`.dt`, or a domain
-            # hero_frame that raises it while building. OverflowError: a y value too large for
-            # float (e.g. 10**10000). All fail closed to "no forecast".
+        except Exception:
+            # hero_frame is UNTRUSTED domain code, and so is everything that consumes its output
+            # here. ANY exception (wrong return type, overflow, non-numeric y, or an arbitrary
+            # RuntimeError/OSError from inside it) means "no forecast", never a crash. Only
+            # BaseException (KeyboardInterrupt/SystemExit) escapes.
             return {"forecast": forecast_result}
         if kpi_series_reason(hero, y, min_len=MIN_ASSESSMENT_DAYS, bounds=domain.bounds()) is not None:
             return {"forecast": forecast_result}

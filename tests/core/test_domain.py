@@ -29,6 +29,15 @@ def test_rejects_duplicate_kpi_names():
         _domain([KpiSpec("x", is_hero=True), KpiSpec("x")])
 
 
+@pytest.mark.parametrize("bad_name", [None, 123, "", "   "])
+def test_rejects_invalid_kpi_name(bad_name):
+    """A KPI name is a dict key, a report label (name.replace(...)) and a rec identifier; a
+    non-string or empty name would crash rendering or write an unusable governed rec, so it must
+    fail at CONSTRUCTION. Mutation: drop the non-empty-string name check."""
+    with pytest.raises(ValueError):
+        _domain([KpiSpec(bad_name, (0.0, None), is_hero=True)])
+
+
 @pytest.mark.parametrize("bad_bounds", [(float("nan"), 1.0), (0.0, float("inf")), (1.0, 0.0), (True, 1.0)])
 def test_rejects_unsafe_bounds_at_construction(bad_bounds):
     """A self-consistent Domain must reject NaN/inf/inverted/bool bounds when built, not fail open

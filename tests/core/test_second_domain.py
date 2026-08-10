@@ -431,24 +431,45 @@ def test_dq_recommendation_raise_or_blank_uses_safe_fallback(bad_dq, tmp_path):
     assert ok is True, reason
 
 
-def test_verify_run_rejects_flagged_run_with_empty_or_blank_recs():
-    """verify_run's trust boundary: an alerting artifact (WARNING/CRITICAL/DATA_QUALITY) with an
-    empty governed-recommendation stage, or a rec with a blank required field, must FAIL closed."""
+def test_verify_schema_rejects_incomplete_and_contradictory_artifacts():
+    """verify_run's trust boundary must fail closed on a hash-consistent but SEMANTICALLY invalid
+    artifact: an empty/blank governed stage on a flagged run, an overall_severity that disagrees
+    with the KPI severities, an alert that disagrees with the policy, a recommendation for an
+    unassessed KPI, or forecast bounds that violate lower <= yhat <= upper."""
     from streamlit_app.data import _findings_schema_reason
 
-    def base(sev, recs):
-        return {"run_id": "r", "generated_at": "2026", "overall_severity": sev,
-                "kpi_findings": [], "forecast": {}, "recommendations": recs}
+    def kf(kpi, sev):
+        return {"kpi": kpi, "severity": sev, "detail": "d", "latest_value": None}
 
-    assert _findings_schema_reason(base("CRITICAL", [])) is not None          # empty governed stage
-    assert _findings_schema_reason(base("DATA_QUALITY", [])) is not None
-    assert _findings_schema_reason(base("SAFE", [])) is None                  # SAFE need not (not over-rejected)
-    blank = [{"kpi": "x", "text": "   ", "capa_frame": "f",
-              "review_status": "PENDING_HUMAN_REVIEW", "disclaimer": "d"}]
-    assert _findings_schema_reason(base("WARNING", blank)) is not None        # blank text field
-    good = [{"kpi": "x", "text": "do y", "capa_frame": "f",
-             "review_status": "PENDING_HUMAN_REVIEW", "disclaimer": "d"}]
-    assert _findings_schema_reason(base("CRITICAL", good)) is None            # valid flagged artifact
+    def rec(kpi="x"):
+        return {"kpi": kpi, "text": "do y", "capa_frame": "f",
+                "review_status": "PENDING_HUMAN_REVIEW", "disclaimer": "d"}
+
+    def base(sev, recs, kfs=None, **extra):
+        fj = {"run_id": "r", "generated_at": "2026", "overall_severity": sev,
+              "kpi_findings": [kf("x", sev)] if kfs is None else kfs,
+              "forecast": {}, "recommendations": recs, "alert": sev in ("CRITICAL", "DATA_QUALITY")}
+        fj.update(extra)
+        return fj
+
+    # Empty governed stage on a flagged run; blank required field
+    assert _findings_schema_reason(base("CRITICAL", [])) is not None
+    assert _findings_schema_reason(base("DATA_QUALITY", [], kfs=[kf("x", "DATA_QUALITY")])) is not None
+    assert _findings_schema_reason(base("SAFE", [])) is None                  # SAFE not over-rejected
+    blank = {"kpi": "x", "text": "   ", "capa_frame": "f",
+             "review_status": "PENDING_HUMAN_REVIEW", "disclaimer": "d"}
+    assert _findings_schema_reason(base("WARNING", [blank])) is not None
+    # Cross-field contradictions
+    assert _findings_schema_reason(base("SAFE", [rec()], kfs=[kf("x", "CRITICAL")])) is not None   # overall vs findings
+    assert _findings_schema_reason(base("CRITICAL", [rec()], alert=False)) is not None             # alert vs severity
+    assert _findings_schema_reason(base("CRITICAL", [rec("invented")])) is not None                # invented rec KPI
+    bad_fc = {"x": {"calibration": {"applied": False},
+                    "h30": {"yhat": 1, "lower": 2, "upper": 0},   # lower > yhat > upper
+                    "h60": {"yhat": 1, "lower": 0, "upper": 2},
+                    "h90": {"yhat": 1, "lower": 0, "upper": 2}}}
+    assert _findings_schema_reason(base("CRITICAL", [rec()], forecast=bad_fc)) is not None          # bad bounds
+    # A fully consistent flagged artifact passes
+    assert _findings_schema_reason(base("CRITICAL", [rec()])) is None
 
 
 def _raise_generate(start, days, seed):
@@ -471,4 +492,54 @@ def test_malformed_generate_raises_and_leaves_no_partial_run_dir(bad_generate, t
     with pytest.raises(ValueError):
         run_tick(BaselineMemory(tmp_path / "m.json"), 0, out_root=out,
                  now="2026-01-01T00:00:00", offline=True, domain=dom)
+    assert (not out.exists()) or list(out.iterdir()) == []
+
+
+# --- final-review round: broaden domain-callback catch, atomic write ------------------------------
+
+@pytest.mark.parametrize("exc", [RuntimeError, OSError, KeyError, ValueError])
+def test_extract_arbitrary_exception_is_data_quality(exc, tmp_path):
+    """extract is UNTRUSTED domain code: ANY Exception (not only shape/conversion errors) must be
+    DATA_QUALITY, via both run and tick. Mutation: narrow `except Exception` back to a type tuple
+    -> RuntimeError/OSError escape and crash the run."""
+    def bad_extract(streams, kpi):
+        raise exc("extract boom")
+
+    dom = replace(DEMO, extract=bad_extract)
+    f = run_tick(BaselineMemory(tmp_path / "m.json"), 0, out_root=tmp_path / "r",
+                 now="2026-01-01T00:00:00", offline=True, domain=dom)
+    assert all(k.severity == "DATA_QUALITY" for k in f.kpi_findings)
+    det = detect_node({"streams": DEMO.generate(date(2026, 1, 1), 200, 0)}, dom)
+    assert all(k.severity == "DATA_QUALITY" for k in det["kpi_findings"])
+
+
+@pytest.mark.parametrize("exc", [RuntimeError, OSError, KeyError])
+def test_hero_frame_arbitrary_exception_no_forecast(exc, tmp_path):
+    """hero_frame is UNTRUSTED: ANY Exception -> no forecast, no crash. Mutation: narrow the except."""
+    def boom(streams):
+        raise exc("hero boom")
+
+    dom = replace(DEMO, hero_frame=boom)
+    f = run_tick(BaselineMemory(tmp_path / "m.json"), 0, out_root=tmp_path / "r",
+                 now="2026-01-01T00:00:00", offline=True, domain=dom)
+    assert f.forecast == {}
+
+
+def test_mid_write_failure_leaves_no_partial_run_dir(tmp_path, monkeypatch):
+    """A real filesystem failure mid-write (OSError on report.md) must leave NO partial durable run
+    directory — the write stages to a private dir and swaps in atomically. Mutation: write directly
+    into out_dir -> findings.json is left behind without audit.jsonl."""
+    from pathlib import Path as _P
+    orig = _P.write_text
+
+    def failing(self, *a, **k):
+        if self.name == "report.md":
+            raise OSError("disk full")
+        return orig(self, *a, **k)
+
+    monkeypatch.setattr(_P, "write_text", failing)
+    out = tmp_path / "runs"
+    with pytest.raises(OSError):
+        run_tick(BaselineMemory(tmp_path / "m.json"), 0, out_root=out,
+                 now="2026-01-01T00:00:00", offline=True, domain=DEMO)
     assert (not out.exists()) or list(out.iterdir()) == []
