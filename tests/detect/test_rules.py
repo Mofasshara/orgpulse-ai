@@ -67,6 +67,32 @@ def test_datemath_detect_fails_safe_on_non_finite_latest(bad):
     _assert_dq(datemath_detect(_arr(bad), None, "icaap"))
 
 
+# Malformed SHAPE/DTYPE, not just non-finite values. The standalone detectors must fail safe on
+# their own (like cusum/isolation), not only when the pipeline's series gate intercepts first.
+_MALFORMED = [
+    ([], "empty series"),
+    (["bad"], "non-numeric series"),
+    ([[12.0, 10.0]], "2-D array"),
+    (10.0, "0-D scalar"),
+    (None, "None"),
+]
+
+
+@pytest.mark.parametrize("bad,_desc", _MALFORMED)
+def test_threshold_detect_fails_safe_on_malformed_input(bad, _desc):
+    """Empty/ragged/2-D/non-numeric/0-D input must return DATA_QUALITY, never raise. Mutation:
+    index-and-convert before validating (the old `float(np.asarray(values)[-1])`) -> IndexError/
+    ValueError/TypeError."""
+    th = {"warn": 11.5, "critical": 10.5, "direction": "below"}
+    _assert_dq(threshold_detect(bad, th, "cet1"))
+
+
+@pytest.mark.parametrize("bad,_desc", _MALFORMED)
+def test_datemath_detect_fails_safe_on_malformed_input(bad, _desc):
+    """Same standalone malformed-input fail-safe for the deadline detector."""
+    _assert_dq(datemath_detect(bad, None, "icaap"))
+
+
 def test_min_history_is_mode_aware():
     assert min_history_for(DetectionMode.TIMESERIES) == 120
     assert min_history_for(DetectionMode.THRESHOLD) == 1

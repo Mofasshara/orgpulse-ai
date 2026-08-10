@@ -146,8 +146,9 @@ date validation and timezone normalization, the generic `streams` state, the dom
 verifier, the domain-hero references, the `Domain` config validation — including THRESHOLD/DATEMATH
 threshold finiteness, strict band reachability (equal/inverted cutoffs rejected so no severity is
 unreachable) and unknown-key rejection, the per-mode detection dispatch, the rule detectors'
-fail-safe on non-finite input (the shared `score=None, flagged=True` DATA_QUALITY convention), or the
-tick's timeseries-only baseline contract) makes a test fail — so the suite
+standalone fail-safe on malformed/non-finite input — empty/ragged/2-D/non-numeric/0-D/NaN/inf all
+return the shared `score=None, flagged=True` DATA_QUALITY result — or the tick's timeseries-only
+baseline contract) makes a test fail — so the suite
 genuinely pins the invariants, it isn't a vacuous pass. Every node/loop takes
 `domain: Domain = PHARMA`, so pharma behavior is the default and byte-for-byte unchanged by this
 seam (golden-master gated).

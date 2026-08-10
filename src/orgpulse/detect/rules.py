@@ -22,20 +22,43 @@ def min_history_for(mode: DetectionMode) -> int:
     return MIN_ASSESSMENT_DAYS if mode is DetectionMode.TIMESERIES else 1
 
 
+def _latest_finite(values) -> tuple[float | None, str | None]:
+    """Extract the LATEST value as a finite float, or return a reason it is unassessable.
+
+    Standalone-safe (never raises): empty, ragged/2-D, non-numeric, 0-D-scalar, and non-finite
+    inputs all yield a reason rather than an exception — so the rule detectors return DATA_QUALITY
+    on malformed input just like cusum/isolation do on their OWN, not only when the pipeline's
+    series gate happens to intercept first. Returns (value, None) on success, (None, reason) otherwise.
+    """
+    try:
+        arr = np.asarray(values, dtype=float)
+    except (ValueError, TypeError):
+        return None, "value is non-numeric or ragged; cannot assess"
+    if arr.ndim != 1:
+        return None, f"expected a 1-D series, got a {arr.ndim}-D array; cannot assess"
+    if arr.size == 0:
+        return None, "empty series; cannot assess"
+    v = float(arr[-1])
+    # Fail SAFE-is-not-the-default: a non-finite latest value is unassessable, not "not breached".
+    if not math.isfinite(v):
+        return None, f"non-finite latest value ({v}); cannot assess"
+    return v, None
+
+
+def _dq(kpi: str, method: str, reason: str) -> AnomalyResult:
+    """A DATA_QUALITY result in the shared convention: score=None (never a non-finite float that
+    breaks allow_nan=False serialization), flagged=True (surfaced, not silently passed)."""
+    return AnomalyResult(kpi=kpi, method=method, severity=Severity.DATA_QUALITY, score=None,
+                         flagged=True, detail=f"{kpi}: {reason}")
+
+
 def threshold_detect(values, thresholds: dict, kpi: str) -> AnomalyResult:
     """Hard min/max rule on the LATEST value. ``thresholds`` = {"warn", "critical", "direction"}
     where direction is "below" (breach when value <= threshold, e.g. a capital floor) or "above"
     (breach when value >= threshold, e.g. a utilization ceiling)."""
-    v = float(np.asarray(values, dtype=float)[-1])
-    # Fail SAFE-is-not-the-default: a non-finite latest value is unassessable, not "not breached".
-    # The pipeline's series gate usually intercepts this, but the detector must be correct on its
-    # own — consistent with the timeseries detectors, which return DATA_QUALITY on non-finite data.
-    if not math.isfinite(v):
-        # Match the DATA_QUALITY convention of every other detector (zscore/cusum/isolation/
-        # orchestrator): score=None (never a non-finite float that breaks allow_nan=False
-        # serialization), flagged=True (a DQ finding is surfaced, not silently passed).
-        return AnomalyResult(kpi=kpi, method="threshold", severity=Severity.DATA_QUALITY, score=None,
-                             flagged=True, detail=f"{kpi}: non-finite value ({v}); cannot assess threshold")
+    v, reason = _latest_finite(values)
+    if reason is not None:
+        return _dq(kpi, "threshold", reason)
     warn, crit = float(thresholds["warn"]), float(thresholds["critical"])
     direction = thresholds.get("direction", "below")
     if direction == "below":
@@ -53,13 +76,9 @@ def datemath_detect(values, thresholds: dict | None, kpi: str) -> AnomalyResult:
     """Deadline arithmetic on the LATEST value, interpreted as DAYS REMAINING (negative = overdue).
     CRITICAL if overdue or within `critical_days` (default 3); WARNING within `warn_days`
     (default 14); else SAFE."""
-    days = float(np.asarray(values, dtype=float)[-1])
-    # A non-finite "days remaining" is unassessable (fail safe, not SAFE) — same contract as
-    # threshold_detect and the timeseries detectors.
-    if not math.isfinite(days):
-        # Same DATA_QUALITY convention as the other detectors: score=None, flagged=True.
-        return AnomalyResult(kpi=kpi, method="datemath", severity=Severity.DATA_QUALITY, score=None,
-                             flagged=True, detail=f"{kpi}: non-finite days-remaining ({days}); cannot assess deadline")
+    days, reason = _latest_finite(values)
+    if reason is not None:
+        return _dq(kpi, "datemath", reason)
     t = thresholds or {}
     warn_days, crit_days = float(t.get("warn_days", 14)), float(t.get("critical_days", 3))
     if days < 0:
