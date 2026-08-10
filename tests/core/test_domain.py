@@ -61,11 +61,17 @@ def test_threshold_mode_requires_valid_thresholds():
     {"warn": 10.0, "critical": 12.0, "direction": "below"},             # inverted: critical > warn (below)
     {"warn": 95.0, "critical": 80.0, "direction": "above"},             # inverted: critical < warn (above)
     {"warn": True, "critical": 10.5, "direction": "below"},             # bool is not a number
+    {"warn": 10.0, "critical": 10.0, "direction": "below"},             # equal -> WARNING unreachable (below)
+    {"warn": 80.0, "critical": 80.0, "direction": "above"},             # equal -> WARNING unreachable (above)
+    {"warn": 11.5, "critical": 10.5, "junk": 99},                       # unknown key (typo/garbage)
+    None,                                                                # THRESHOLD requires a dict
+    [],                                                                  # non-dict (falsy)
 ])
 def test_rejects_unsafe_threshold_config_at_construction(bad_th):
-    """A THRESHOLD KPI with a non-finite or directionally-inverted band must fail at CONSTRUCTION,
-    not crash a run or silently return a wrong/unreachable severity. Mutation-constrains the
-    __post_init__ THRESHOLD finiteness + ordering checks."""
+    """A THRESHOLD KPI with a non-finite, directionally-inverted, EQUAL-cutoff (unreachable
+    WARNING), unknown-key, or non-dict config must fail at CONSTRUCTION — not crash a run, silently
+    return a wrong/unreachable severity, or mask a typo. Mutation-constrains the __post_init__
+    THRESHOLD finiteness + strict-ordering + unknown-key checks."""
     with pytest.raises(ValueError):
         _domain([KpiSpec("h", (0.0, 1.0), is_hero=True),
                  KpiSpec("x", (0.0, None), DetectionMode.THRESHOLD, thresholds=bad_th)])
@@ -76,11 +82,18 @@ def test_rejects_unsafe_threshold_config_at_construction(bad_th):
     {"warn_days": float("nan"), "critical_days": 3}, # non-finite
     {"warn_days": 3, "critical_days": 14},           # inverted: critical_days > warn_days
     {"warn_days": -1, "critical_days": 3},           # negative days-remaining threshold
+    {"warn_days": 3, "critical_days": 3},            # equal -> WARNING unreachable
+    {"warn_day": 1, "critical_days": 0},             # unknown key (typo 'warn_day') silently masks intent
+    {"warn_days": 14, "critical_days": 3, "junk": 99},  # arbitrary extra key
+    [],                                              # falsy non-dict -> must NOT become defaults
+    "",                                              # falsy non-dict
+    False,                                           # falsy non-dict
 ])
 def test_rejects_unsafe_datemath_config_at_construction(bad_th):
-    """A DATEMATH KPI with a non-numeric/non-finite/negative/inverted threshold must fail at
-    CONSTRUCTION. The string case is the exact one Codex reproduced crashing run_pipeline/run_tick
-    with `could not convert string to float`. Mutation-constrains the __post_init__ DATEMATH check."""
+    """A DATEMATH KPI with a non-numeric/non-finite/negative/inverted/equal threshold, an unknown
+    key, or a falsy non-dict config must fail at CONSTRUCTION. The string `warn_days` is the exact
+    case Codex reproduced crashing run_pipeline/run_tick; the falsy non-dicts must NOT silently
+    fall back to the 14/3 defaults. Mutation-constrains the __post_init__ DATEMATH check."""
     with pytest.raises(ValueError):
         _domain([KpiSpec("h", (0.0, 1.0), is_hero=True),
                  KpiSpec("d", (None, None), DetectionMode.DATEMATH, thresholds=bad_th)])

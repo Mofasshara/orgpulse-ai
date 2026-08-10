@@ -31,8 +31,11 @@ def threshold_detect(values, thresholds: dict, kpi: str) -> AnomalyResult:
     # The pipeline's series gate usually intercepts this, but the detector must be correct on its
     # own — consistent with the timeseries detectors, which return DATA_QUALITY on non-finite data.
     if not math.isfinite(v):
-        return AnomalyResult(kpi=kpi, method="threshold", severity=Severity.DATA_QUALITY, score=v,
-                             flagged=False, detail=f"{kpi}: non-finite value ({v}); cannot assess threshold")
+        # Match the DATA_QUALITY convention of every other detector (zscore/cusum/isolation/
+        # orchestrator): score=None (never a non-finite float that breaks allow_nan=False
+        # serialization), flagged=True (a DQ finding is surfaced, not silently passed).
+        return AnomalyResult(kpi=kpi, method="threshold", severity=Severity.DATA_QUALITY, score=None,
+                             flagged=True, detail=f"{kpi}: non-finite value ({v}); cannot assess threshold")
     warn, crit = float(thresholds["warn"]), float(thresholds["critical"])
     direction = thresholds.get("direction", "below")
     if direction == "below":
@@ -54,8 +57,9 @@ def datemath_detect(values, thresholds: dict | None, kpi: str) -> AnomalyResult:
     # A non-finite "days remaining" is unassessable (fail safe, not SAFE) — same contract as
     # threshold_detect and the timeseries detectors.
     if not math.isfinite(days):
-        return AnomalyResult(kpi=kpi, method="datemath", severity=Severity.DATA_QUALITY, score=days,
-                             flagged=False, detail=f"{kpi}: non-finite days-remaining ({days}); cannot assess deadline")
+        # Same DATA_QUALITY convention as the other detectors: score=None, flagged=True.
+        return AnomalyResult(kpi=kpi, method="datemath", severity=Severity.DATA_QUALITY, score=None,
+                             flagged=True, detail=f"{kpi}: non-finite days-remaining ({days}); cannot assess deadline")
     t = thresholds or {}
     warn_days, crit_days = float(t.get("warn_days", 14)), float(t.get("critical_days", 3))
     if days < 0:

@@ -108,12 +108,20 @@ class Domain:
                 raise ValueError(f"KPI {k.name!r}: lower bound {lo} exceeds upper bound {hi}")
             if k.detection_mode is DetectionMode.THRESHOLD:
                 # THRESHOLD/DATEMATH thresholds drive run-time float() arithmetic, so a malformed
-                # one (non-finite, non-numeric, or a directionally-inverted band that renders a
-                # severity unreachable) must fail HERE, at construction — never crash a run or
-                # silently return the wrong severity.
+                # one must fail HERE, at construction — never crash a run, silently return the
+                # wrong severity, or hide a typo. Reject: non-dict configs (including falsy ones
+                # like [] / "" / False); unknown keys (a misspelled 'warn_day' would otherwise
+                # silently fall back to the default, masking the intended value); non-finite/
+                # non-numeric cutoffs; and any band ordering that makes a severity UNREACHABLE
+                # (WARNING must be attainable — see the strict comparisons below).
                 th = k.thresholds
                 if not isinstance(th, dict):
-                    raise ValueError(f"KPI {k.name!r}: THRESHOLD mode requires a thresholds dict")
+                    raise ValueError(f"KPI {k.name!r}: THRESHOLD mode requires a thresholds dict, got {th!r}")
+                allowed = {"warn", "critical", "direction"}
+                unknown = set(th) - allowed
+                if unknown:
+                    raise ValueError(f"KPI {k.name!r}: THRESHOLD thresholds has unknown key(s) {sorted(unknown)}; "
+                                     f"allowed keys are {sorted(allowed)}")
                 nums = {}
                 for x in ("warn", "critical"):
                     v = th.get(x)
@@ -123,27 +131,38 @@ class Domain:
                 direction = th.get("direction", "below")
                 if direction not in ("below", "above"):
                     raise ValueError(f"KPI {k.name!r}: threshold 'direction' must be 'below' or 'above'")
-                # CRITICAL must sit further in the breach direction than WARNING; otherwise one band
-                # is unreachable (e.g. below with critical > warn: any value <= warn is also <= critical).
-                if direction == "below" and nums["critical"] > nums["warn"]:
+                # CRITICAL must sit STRICTLY further in the breach direction than WARNING; otherwise a
+                # band is unreachable (e.g. below with critical >= warn: every value <= warn is also
+                # <= critical, so WARNING never fires — a collapsed two-state config, not a supported mode).
+                if direction == "below" and nums["critical"] >= nums["warn"]:
                     raise ValueError(f"KPI {k.name!r}: for direction 'below', critical ({nums['critical']:g}) "
-                                     f"must be <= warn ({nums['warn']:g})")
-                if direction == "above" and nums["critical"] < nums["warn"]:
+                                     f"must be < warn ({nums['warn']:g}) so WARNING is reachable")
+                if direction == "above" and nums["critical"] <= nums["warn"]:
                     raise ValueError(f"KPI {k.name!r}: for direction 'above', critical ({nums['critical']:g}) "
-                                     f"must be >= warn ({nums['warn']:g})")
+                                     f"must be > warn ({nums['warn']:g}) so WARNING is reachable")
             if k.detection_mode is DetectionMode.DATEMATH:
-                th = k.thresholds or {}
+                # Only None means "use the default 14/3-day bands". A falsy non-dict ([] / "" / False)
+                # is a malformed config, not a request for defaults — reject it. Unknown keys are
+                # rejected for the same typo-masking reason as THRESHOLD.
+                th = {} if k.thresholds is None else k.thresholds
                 if not isinstance(th, dict):
-                    raise ValueError(f"KPI {k.name!r}: DATEMATH thresholds must be a dict or None")
+                    raise ValueError(f"KPI {k.name!r}: DATEMATH thresholds must be a dict or None, got {k.thresholds!r}")
+                allowed = {"warn_days", "critical_days"}
+                unknown = set(th) - allowed
+                if unknown:
+                    raise ValueError(f"KPI {k.name!r}: DATEMATH thresholds has unknown key(s) {sorted(unknown)}; "
+                                     f"allowed keys are {sorted(allowed)}")
                 day_vals = {}
                 for x, default in (("warn_days", 14.0), ("critical_days", 3.0)):
                     v = th.get(x, default)
                     if not (isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)) or v < 0:
                         raise ValueError(f"KPI {k.name!r}: DATEMATH '{x}' must be a finite number >= 0, got {v!r}")
                     day_vals[x] = float(v)
-                if day_vals["critical_days"] > day_vals["warn_days"]:
+                # WARNING band = (critical_days, warn_days]; require critical_days STRICTLY < warn_days
+                # so it is non-empty (same reachability rule as THRESHOLD).
+                if day_vals["critical_days"] >= day_vals["warn_days"]:
                     raise ValueError(f"KPI {k.name!r}: DATEMATH critical_days ({day_vals['critical_days']:g}) "
-                                     f"must be <= warn_days ({day_vals['warn_days']:g})")
+                                     f"must be < warn_days ({day_vals['warn_days']:g}) so WARNING is reachable")
         for cb in ("generate", "extract", "offline_recommend", "dq_recommendation"):
             if not callable(getattr(self, cb)):
                 raise ValueError(f"domain {self.name!r}: {cb} must be callable, got {getattr(self, cb)!r}")
