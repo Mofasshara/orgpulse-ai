@@ -94,6 +94,15 @@ def test_datemath_detect_fails_safe_on_malformed_input(bad, _desc):
     _assert_dq(datemath_detect(bad, None, "icaap"))
 
 
+def test_detect_kpi_fails_safe_on_overflow_standalone():
+    """The timeseries orchestrator must fail to DATA_QUALITY on an int-too-large-for-float, standalone
+    too (via the shared ensure_1d_finite gate converting OverflowError -> ValueError, which every
+    caller already catches). Mutation: drop that conversion -> OverflowError propagates uncaught."""
+    from orgpulse.detect.orchestrator import detect_kpi
+    res = detect_kpi([10 ** 10000] * 120, [10 ** 10000] * 30, "x")
+    assert all(r.severity is Severity.DATA_QUALITY for r in res)
+
+
 def test_min_history_is_mode_aware():
     assert min_history_for(DetectionMode.TIMESERIES) == 120
     assert min_history_for(DetectionMode.THRESHOLD) == 1

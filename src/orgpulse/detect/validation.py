@@ -10,7 +10,13 @@ MIN_ASSESSMENT_DAYS: int = 120
 
 
 def ensure_1d_finite(values, name: str) -> np.ndarray:
-    arr = np.asarray(values, dtype=float)
+    try:
+        arr = np.asarray(values, dtype=float)
+    except OverflowError as exc:
+        # An int too large for float (e.g. 10**10000) is corrupt numeric data. Raise ValueError —
+        # the class every caller (baseline/cusum/orchestrator detect_kpi) already catches — so the
+        # timeseries path fails to DATA_QUALITY standalone too, matching the rule detectors' gate.
+        raise ValueError(f"{name} contains a value too large for float") from exc
     if arr.ndim != 1:
         raise ValueError(f"{name} must be 1-D, got {arr.ndim}-D")
     if arr.size == 0:

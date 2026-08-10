@@ -142,14 +142,18 @@ non-timeseries modes need only the latest value, not a full baseline.
 stack on them — `run_tick`, the public `run_pipeline`, the LangGraph pipeline, the hero forecast,
 `verify_run`, and the offline framing — with **no engine changes**. Each test is
 **mutation-constrained**: reverting any single fix (the detect/forecast parity guard, the hero-frame
-date validation, timezone normalization, and type/fail-closed guarding (a domain `hero_frame` or
-`extract` that returns the wrong type or raises yields DATA_QUALITY / no forecast, never a crash),
-the generic `streams` state, the domain-agnostic
+date validation, timezone normalization and hero-`y` float coercion (a numeric-string/object y is
+normalized back into the frame Prophet consumes), and type/fail-closed guarding (a domain
+`hero_frame` or `extract` that returns the wrong type or raises yields DATA_QUALITY / no forecast,
+never a crash), the generic `streams` state, the domain-agnostic
 verifier (which also rejects an alerting artifact whose governed-recommendation stage is empty or
-blank), the OverflowError-safe shared numeric gate, the guarded recommendation callables (a raising
-or malformed `offline_recommend`/`dq_recommendation` never crashes and never empties the governed
+blank), the OverflowError-safe numeric gates (the rule detectors' `_latest_finite`, the shared
+`kpi_series_reason`, the timeseries `ensure_1d_finite`, and the forecast y-coercion all fail a huge
+int to DATA_QUALITY), the guarded analyst + recommendation callables (a raising or malformed
+`llm.analyze`/`offline_recommend`/`dq_recommendation` never crashes and never empties the governed
 stage — a deterministic safe fallback is used), the atomic tick write (a malformed `generate()`
-leaves no partial run directory), the domain-hero references, the `Domain` config validation — including THRESHOLD/DATEMATH
+leaves no partial run directory), the string-typed `Domain` framing fields, the domain-hero
+references, the `Domain` config validation — including THRESHOLD/DATEMATH
 threshold finiteness, strict band reachability (equal/inverted cutoffs rejected so no severity is
 unreachable) and unknown-key rejection, the per-mode detection dispatch, the rule detectors'
 standalone fail-safe on malformed/non-finite input — empty/ragged/2-D/non-numeric/0-D/NaN/inf all

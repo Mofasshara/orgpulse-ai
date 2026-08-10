@@ -289,6 +289,56 @@ def test_forecast_fails_closed_on_malformed_hero_frame_return(bad_hero_frame, tm
     assert f.forecast == {}
 
 
+def test_forecast_fails_closed_on_overflow_hero_y(tmp_path):
+    """A hero_frame whose y contains an int too large for float (10**10000 -> OverflowError in
+    to_numpy) must yield no forecast, not crash. Mutation: drop OverflowError from the hero-frame
+    except -> run crashes."""
+    def huge_y(streams):
+        fr = _demo_hero_frame(streams)
+        fr["y"] = [10 ** 10000] * len(fr)
+        return fr
+
+    dom = replace(DEMO, hero_frame=huge_y)
+    f = run_tick(BaselineMemory(tmp_path / "m.json"), 0, out_root=tmp_path / "r",
+                 now="2026-01-01T00:00:00", offline=True, domain=dom)   # must NOT raise
+    assert f.forecast == {}
+
+
+def test_forecast_normalizes_numeric_string_hero_y(tmp_path):
+    """A hero_frame whose y is numeric-string/object dtype is VALID and must forecast, not crash
+    Prophet ("'>=' not supported between str and float"). The validated FLOAT y must be written BACK
+    to the frame Prophet/calibration consume — symmetric with the tz-aware ds fix. Mutation: drop
+    `daily_df = daily_df.assign(y=y)` -> the original string column reaches Prophet -> TypeError."""
+    def strnum_y(streams):
+        fr = _demo_hero_frame(streams)
+        fr["y"] = fr["y"].astype(str)
+        return fr
+
+    dom = replace(DEMO, hero_frame=strnum_y)
+    f = run_tick(BaselineMemory(tmp_path / "m.json"), 0, out_root=tmp_path / "r",
+                 now="2026-01-01T00:00:00", offline=True, domain=dom)
+    assert "widget_rate" in f.forecast
+    ok, reason = data.verify_run(tmp_path / "r" / "latest")
+    assert ok is True, reason
+
+
+def test_analyst_node_fails_closed_when_llm_analyze_raises():
+    """The analyst LLM call (online Claude can raise on network/API) must not crash the run — a raise
+    yields a neutral fallback string, symmetric with recommendation_node's guard. Mutation: remove
+    the try/except around llm.analyze -> RuntimeError propagates."""
+    from orgpulse.pipeline.nodes import analyst_node
+
+    class RaisingLLM:
+        def analyze(self, system, prompt):
+            raise RuntimeError("analyze boom")
+
+        def recommend(self, system, prompt, kpis):
+            return []
+
+    out = analyst_node({"kpi_findings": [], "overall_severity": "SAFE", "forecast": {}}, RaisingLLM(), DEMO)
+    assert isinstance(out["analysis"], str) and out["analysis"].strip()
+
+
 def test_forecast_fails_closed_when_hero_frame_raises(tmp_path):
     """A hero_frame that RAISES while building (here AttributeError) must fail closed, not crash."""
     def boom(streams):

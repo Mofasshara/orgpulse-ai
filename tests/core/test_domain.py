@@ -118,3 +118,15 @@ def test_rejects_non_callable_offline_recommend():
         Domain(name="t", generate=lambda **k: {}, extract=lambda s, n: None,
                kpi_specs=(KpiSpec("x", is_hero=True),), analyst_system="a", recommend_system="r",
                offline_recommend=None)
+
+
+@pytest.mark.parametrize("field", ["analyst_system", "recommend_system", "offline_framing"])
+@pytest.mark.parametrize("bad", [None, 123, ["x"]])
+def test_rejects_non_string_framing_fields(field, bad):
+    """The framing fields are consumed as strings (online LLM system prompts / the offline stub's
+    sentence); a non-string would crash the online call. Reject at construction."""
+    kwargs = dict(name="t", generate=lambda **k: {}, extract=lambda s, n: None,
+                  kpi_specs=(KpiSpec("x", is_hero=True),), analyst_system="a", recommend_system="r")
+    kwargs[field] = bad
+    with pytest.raises(ValueError):
+        Domain(**kwargs)

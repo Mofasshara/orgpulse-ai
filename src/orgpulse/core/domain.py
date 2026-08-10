@@ -168,6 +168,11 @@ class Domain:
                 raise ValueError(f"domain {self.name!r}: {cb} must be callable, got {getattr(self, cb)!r}")
         if self.hero_frame is not None and not callable(self.hero_frame):
             raise ValueError(f"domain {self.name!r}: hero_frame must be callable or None")
+        # The framing fields are consumed as strings (online LLM system prompts; the offline stub's
+        # sentence). A non-string would crash the online analyst/recommend call — reject at construction.
+        for sfield in ("analyst_system", "recommend_system", "offline_framing"):
+            if not isinstance(getattr(self, sfield), str):
+                raise ValueError(f"domain {self.name!r}: {sfield} must be a string, got {type(getattr(self, sfield)).__name__}")
 
     def hero(self) -> str:
         """The KPI to forecast."""

@@ -181,10 +181,17 @@ def forecast_node(state: PipelineState, domain: Domain = PHARMA) -> ForecastNode
             # no-op there (guaranteed byte-identical: the frame is only rebuilt when tz is present).
             if getattr(ds.dt, "tz", None) is not None:
                 daily_df = daily_df.assign(ds=ds.dt.tz_convert("UTC").dt.tz_localize(None))
+            # Validate AND normalize `y` to float, then write it BACK — symmetric with the ds fix.
+            # A numeric-string/object y column coerces here for validation but, if the ORIGINAL
+            # frame were handed to Prophet, would crash it ("'>=' not supported between str and
+            # float"). Assigning the coerced float array back guarantees Prophet/calibration see
+            # floats. (Pharma's y is already float64, so the values are identical -> byte-identical.)
             y = daily_df["y"].to_numpy(dtype=float)
-        except (KeyError, ValueError, TypeError, AttributeError, IndexError):
+            daily_df = daily_df.assign(y=y)
+        except (KeyError, ValueError, TypeError, AttributeError, IndexError, OverflowError):
             # AttributeError: a non-DataFrame return reaching `.columns`/`.dt`, or a domain
-            # hero_frame that raises it while building. All fail closed to "no forecast".
+            # hero_frame that raises it while building. OverflowError: a y value too large for
+            # float (e.g. 10**10000). All fail closed to "no forecast".
             return {"forecast": forecast_result}
         if kpi_series_reason(hero, y, min_len=MIN_ASSESSMENT_DAYS, bounds=domain.bounds()) is not None:
             return {"forecast": forecast_result}
@@ -257,8 +264,16 @@ def analyst_node(state: PipelineState, llm: LLMClient, domain: Domain = PHARMA) 
 
     prompt = "\n".join(prompt_lines)
 
-    # Call LLM analyze
-    analysis = llm.analyze(domain.analyst_system, prompt)
+    # Guard the analyst LLM call (symmetric with recommendation_node): the online Claude path can
+    # raise (network/API), and a raise here would crash the whole run with no artifact. Fail closed
+    # to a neutral note; the KPI findings + forecast + governed recommendations still carry the run.
+    # (Offline the stub never raises, so this is a byte-identical no-op for the default path.)
+    try:
+        analysis = llm.analyze(domain.analyst_system, prompt)
+    except Exception:
+        analysis = "Automated interpretation unavailable (the analyst step failed); refer to the KPI findings and forecast."
+    if not isinstance(analysis, str):
+        analysis = ""
 
     return {"analysis": analysis}
 
