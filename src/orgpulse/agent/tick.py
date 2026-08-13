@@ -223,9 +223,20 @@ def run_tick(
 
     # Article 12 lineage input hash of the actual input frames. Computed ONCE here (streams is
     # validated above) — never inside _write, so the write path can't fail on it after creating files.
-    input_data_hash = hashlib.sha256(
-        "".join(df.to_csv(index=False) for df in streams.values()).encode("utf-8")
-    ).hexdigest()
+    try:
+        input_data_hash = hashlib.sha256(
+            "".join(df.to_csv(index=False) for df in streams.values()).encode("utf-8")
+        ).hexdigest()
+    except (ValueError, TypeError, OverflowError, UnicodeError) as exc:
+        # Raw stream data that cannot be canonically serialized (e.g. a value exceeding
+        # Python's int-string conversion limit) is corrupt generate() output — the same
+        # contract as the malformed-generate() check above. Fail with a clear, operator-facing
+        # error and leave NO partial/unverifiable run directory, rather than letting a raw
+        # pandas/stdlib exception escape mid-tick.
+        raise ValueError(
+            f"domain {domain.name!r} generate() produced input data that cannot be hashed for "
+            f"lineage (corrupt/out-of-range values): {exc}"
+        ) from exc
 
     def _write(out_dir: Path, *, is_latest: bool) -> None:
         # Timestamped run dirs are durable, append-only history: never overwrite one (a
@@ -272,10 +283,36 @@ def run_tick(
             shutil.rmtree(staging, ignore_errors=True)
             raise
         # Swap in. The durable timestamped dir does not exist here (guarded above), so os.replace is
-        # a single atomic rename. `latest/` is a reusable mirror: replace its contents wholesale.
-        if out_dir.exists():
-            shutil.rmtree(out_dir)
-        os.replace(staging, out_dir)
+        # a single atomic rename directly onto `staging`.
+        if not out_dir.exists():
+            try:
+                os.replace(staging, out_dir)
+            except BaseException:
+                shutil.rmtree(staging, ignore_errors=True)
+                raise
+            return
+        # `latest/` is a reusable mirror and IS being overwritten: os.replace can't atomically
+        # clobber a non-empty directory, so the previous approach rmtree'd it first — but a
+        # failure on the subsequent os.replace then left `latest/` deleted with nothing in its
+        # place. Instead, rename the previous snapshot aside (atomic, so `latest/` is never
+        # momentarily absent) and only remove it once the new snapshot is safely installed; on
+        # ANY failure in this block, restore the previous snapshot and clean up staging so the
+        # last verified `latest/` survives and no orphaned staging dir is left behind.
+        backup = out_dir.parent / f".{out_dir.name}.prev-{os.getpid()}"
+        if backup.exists():
+            shutil.rmtree(backup)
+        try:
+            os.replace(out_dir, backup)
+        except BaseException:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+        try:
+            os.replace(staging, out_dir)
+        except BaseException:
+            os.replace(backup, out_dir)
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+        shutil.rmtree(backup, ignore_errors=True)
 
     # Run-dir name includes the tick number so two ticks that share a wall-clock second
     # (default timestamps have only second precision) don't collide onto the same directory.

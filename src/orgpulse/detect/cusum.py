@@ -89,6 +89,13 @@ def cusum_detect(
         return _dq("insufficient baseline (<60)")
     if not finite_nonneg(k):
         return _dq("invalid k")
+
+    # Validation above only checks convertibility; coerce to float HERE so numeric-string inputs
+    # (accepted as valid by the checks above) don't crash the arithmetic that follows.
+    k = float(k)
+    mean = float(baseline.mean)
+    std = float(baseline.std)
+
     # The severity thresholds are Monte-Carlo-calibrated ONLY for the reference slack k=0.5.
     # Any other k would be scored against thresholds that don't match its in-control
     # distribution (false-alarm control breaks — e.g. k=0 → ~88% CRITICAL). Reject it rather
@@ -96,7 +103,7 @@ def cusum_detect(
     if abs(k - 0.5) > 1e-9:
         return _dq("uncalibrated k (CUSUM thresholds are calibrated only for k=0.5)")
 
-    z = (arr - baseline.mean) / baseline.std
+    z = (arr - mean) / std
     warn, crit = calibrated_thresholds(len(arr))
     score, side, cross_idx = _cusum_peak(z, k, warn)
     if not np.isfinite(score):

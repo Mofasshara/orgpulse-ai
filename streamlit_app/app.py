@@ -94,7 +94,7 @@ if not audit_ok:
     with st.expander("Show unverified raw findings (not an operational status)"):
         try:
             st.code((latest / "findings.json").read_text()[:5000], language="json")
-        except OSError:
+        except (OSError, UnicodeError):
             st.write("(findings.json is unreadable)")
     st.stop()
 

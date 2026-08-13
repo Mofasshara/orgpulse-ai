@@ -73,7 +73,10 @@ class HashChainedAuditLog:
         # Fail closed on any malformed log (bad JSON, wrong shape) rather than raising.
         try:
             raw = self._read_raw()
-        except (json.JSONDecodeError, OSError, UnicodeError):
+        except (ValueError, OSError, UnicodeError):
+            # ValueError (not just its json.JSONDecodeError subclass): json.loads raises a
+            # plain ValueError — not JSONDecodeError — when a line contains an integer literal
+            # beyond Python's int-string conversion digit limit (e.g. a 5001-digit number).
             return False
         if not raw:                       # an empty/missing log is NOT a verified record
             return False

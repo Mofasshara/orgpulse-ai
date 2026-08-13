@@ -226,13 +226,19 @@ def forecast_node(state: PipelineState, domain: Domain = PHARMA) -> ForecastNode
         for h in (30, 60, 90):
             fc_at_h = fc.at_horizon(h)
             yhat = float(fc_at_h["yhat"])
-            lower = float(fc_at_h["yhat_lower"])
-            upper = float(fc_at_h["yhat_upper"])
-            forecast_result[hero][f"h{h}"] = {
-                "yhat": yhat,
-                "lower": yhat - scale * (yhat - lower),  # widen by the calibration scale
-                "upper": yhat + scale * (upper - yhat),
-            }
+            lower_raw = float(fc_at_h["yhat_lower"])
+            upper_raw = float(fc_at_h["yhat_upper"])
+            lower = yhat - scale * (yhat - lower_raw)  # widen by the calibration scale
+            upper = yhat + scale * (upper_raw - yhat)
+            if not (math.isfinite(yhat) and math.isfinite(lower) and math.isfinite(upper)):
+                # An extreme hero value (e.g. a finite value at the float64 boundary) can push
+                # Prophet's trend/uncertainty arithmetic, or the calibration scaling above, past
+                # float64 range into inf/NaN. A non-finite bound is not a valid forecast —
+                # publishing one would crash downstream JSON serialization (allow_nan=False) or
+                # display a bogus number. Suppress the WHOLE forecast rather than a partial one
+                # with some horizons finite and others not.
+                return {"forecast": {}}
+            forecast_result[hero][f"h{h}"] = {"yhat": yhat, "lower": lower, "upper": upper}
 
     return {"forecast": forecast_result}
 

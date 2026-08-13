@@ -106,6 +106,8 @@ class Domain:
         for k in self.kpi_specs:
             if not isinstance(k.detection_mode, DetectionMode):
                 raise ValueError(f"KPI {k.name!r}: detection_mode must be a DetectionMode, got {k.detection_mode!r}")
+            if not isinstance(k.is_hero, bool):
+                raise ValueError(f"KPI {k.name!r}: is_hero must be a bool, got {k.is_hero!r}")
             lo, hi = k.domain_bounds
             for edge, v in (("lower", lo), ("upper", hi)):
                 if v is not None and not (isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)):

@@ -83,9 +83,12 @@ def write_run(out: Path, days: int, seed: int, offline: bool):
     model = "offline-stub" if offline else "claude-sonnet-5"
     findings_hash = hashlib.sha256(findings_json.encode("utf-8")).hexdigest()
     report_hash = hashlib.sha256(report_text.encode("utf-8")).hexdigest()
-    input_data_hash = hashlib.sha256(
-        (clinical.to_csv(index=False) + qc.to_csv(index=False) + supply.to_csv(index=False)).encode("utf-8")
-    ).hexdigest()
+    try:
+        input_data_hash = hashlib.sha256(
+            (clinical.to_csv(index=False) + qc.to_csv(index=False) + supply.to_csv(index=False)).encode("utf-8")
+        ).hexdigest()
+    except (ValueError, TypeError, OverflowError, UnicodeError) as exc:
+        raise ValueError(f"generated input data cannot be hashed for lineage (corrupt/out-of-range values): {exc}") from exc
     # The output dir represents exactly THIS run: clear any prior audit log so re-running into
     # the same (default runs/latest) dir doesn't append to a stale chain that would no longer
     # bind to the freshly-overwritten findings.json (breaking verify_run).

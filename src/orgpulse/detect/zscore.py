@@ -18,7 +18,16 @@ def zscore_detect(
     if not is_finite_scalar(value):
         return _dq("non-finite value")
 
-    z = (value - baseline.mean) / baseline.std
+    # Validation above only checks convertibility (e.g. via float(x)); it does not normalize the
+    # values consumed below. Coerce to float HERE so numeric-string inputs (accepted as valid by
+    # the checks above) don't crash the arithmetic that follows.
+    value = float(value)
+    mean = float(baseline.mean)
+    std = float(baseline.std)
+    warn = float(warn)
+    crit = float(crit)
+
+    z = (value - mean) / std
     if not is_finite_scalar(z):
         return _dq("non-finite standardized value")
 
