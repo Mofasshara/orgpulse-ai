@@ -10,7 +10,13 @@ MIN_ASSESSMENT_DAYS: int = 120
 
 
 def ensure_1d_finite(values, name: str) -> np.ndarray:
-    arr = np.asarray(values, dtype=float)
+    try:
+        arr = np.asarray(values, dtype=float)
+    except OverflowError as exc:
+        # An int too large for float (e.g. 10**10000) is corrupt numeric data. Raise ValueError —
+        # the class every caller (baseline/cusum/orchestrator detect_kpi) already catches — so the
+        # timeseries path fails to DATA_QUALITY standalone too, matching the rule detectors' gate.
+        raise ValueError(f"{name} contains a value too large for float") from exc
     if arr.ndim != 1:
         raise ValueError(f"{name} must be 1-D, got {arr.ndim}-D")
     if arr.size == 0:
@@ -21,30 +27,33 @@ def ensure_1d_finite(values, name: str) -> np.ndarray:
 
 
 def is_finite_scalar(x) -> bool:
+    # OverflowError: an int too large for float (e.g. 10**10000) is NOT a finite scalar; it must
+    # read False, not crash. This is the shared scalar gate — baseline_is_usable / finite_* /
+    # baseline_domain_feasible all funnel through it, so a corrupt scalar baseline fails safe here.
     try:
         return bool(np.isfinite(float(x)))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return False
 
 
 def baseline_is_usable(mean, std, n) -> bool:
     try:
         return is_finite_scalar(mean) and is_finite_scalar(std) and float(std) > 0.0 and int(n) >= 1
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return False
 
 
 def finite_positive_order(warn, crit) -> bool:
     try:
         return is_finite_scalar(warn) and is_finite_scalar(crit) and 0.0 < float(warn) < float(crit)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return False
 
 
 def finite_nonneg(x) -> bool:
     try:
         return is_finite_scalar(x) and float(x) >= 0.0
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return False
 
 
@@ -59,14 +68,20 @@ KPI_DOMAINS: dict[str, tuple[float | None, float | None]] = {
 }
 
 
-def kpi_domain_reason(kpi: str, arr: np.ndarray) -> str | None:
+def kpi_domain_reason(kpi: str, arr: np.ndarray, bounds: dict | None = None) -> str | None:
     """Return a DATA_QUALITY reason if any value violates the KPI's domain, else None.
-    Assumes `arr` is already finite (call after the finite check)."""
-    bounds = KPI_DOMAINS.get(kpi)
-    if bounds is None:
+    Assumes `arr` is already finite (call after the finite check). ``bounds`` is the active
+    domain's {kpi: (lo, hi)} map; defaults to the pharma KPI_DOMAINS for backward compatibility."""
+    kpi_bounds = (bounds if bounds is not None else KPI_DOMAINS).get(kpi)
+    if kpi_bounds is None:
         return None
-    lo, hi = bounds
-    a = np.asarray(arr, dtype=float)
+    lo, hi = kpi_bounds
+    try:
+        a = np.asarray(arr, dtype=float)
+    except (ValueError, TypeError, OverflowError):
+        # Standalone-safe: a non-numeric/overflow-sized array is out-of-domain by definition, not
+        # a crash (this helper is also reachable directly, not only after the finite check).
+        return f"unusable input (non-numeric or out-of-range) for {kpi}"
     if lo is not None and np.any(a < lo):
         return f"value below domain minimum {lo} for {kpi}"
     if hi is not None and np.any(a > hi):
@@ -74,7 +89,7 @@ def kpi_domain_reason(kpi: str, arr: np.ndarray) -> str | None:
     return None
 
 
-def baseline_domain_feasible(kpi: str, mean, std) -> bool:
+def baseline_domain_feasible(kpi: str, mean, std, bounds: dict | None = None) -> bool:
     """Is a REMEMBERED baseline physically consistent with the KPI, beyond finite mean/std?
     The baseline drives detection, so a corrupt one (loaded from a writable file) must be
     rejected: its mean must be in-domain, and for a bounded KPI its std cannot exceed the
@@ -82,15 +97,15 @@ def baseline_domain_feasible(kpi: str, mean, std) -> bool:
     z-score to ~0, making everything read SAFE)."""
     if not (is_finite_scalar(mean) and is_finite_scalar(std)):
         return False
-    if kpi_domain_reason(kpi, np.asarray([float(mean)])) is not None:
+    if kpi_domain_reason(kpi, np.asarray([float(mean)]), bounds) is not None:
         return False
-    lo, hi = KPI_DOMAINS.get(kpi, (None, None))
+    lo, hi = (bounds if bounds is not None else KPI_DOMAINS).get(kpi, (None, None))
     if lo is not None and hi is not None and float(std) > (hi - lo):
         return False
     return True
 
 
-def kpi_series_reason(kpi: str, series, *, min_len: int | None = None) -> str | None:
+def kpi_series_reason(kpi: str, series, *, min_len: int | None = None, bounds: dict | None = None) -> str | None:
     """THE single "is this KPI series usable?" check, shared by every consumer (detection,
     forecasting, the tick). Returns a DATA_QUALITY reason or None. Checks: numeric &
     convertible, 1-D, optional minimum length, all-finite, and in-domain. Centralizing this
@@ -99,12 +114,14 @@ def kpi_series_reason(kpi: str, series, *, min_len: int | None = None) -> str | 
     """
     try:
         a = np.asarray(series, dtype=float)
-    except (ValueError, TypeError):
-        return f"unusable input (non-numeric or ragged) for {kpi}"
+    except (ValueError, TypeError, OverflowError):
+        # OverflowError: an int too large to convert to float (e.g. 10**10000). Corrupt numeric
+        # data -> DATA_QUALITY, not a crash. Caught here at the SHARED gate so every consumer agrees.
+        return f"unusable input (non-numeric, ragged, or out-of-range) for {kpi}"
     if a.ndim != 1:
         return f"unusable input ({a.ndim}-D, expected 1-D) for {kpi}"
     if min_len is not None and len(a) < min_len:
         return f"insufficient data ({len(a)} points < {min_len} required) for {kpi}"
     if a.size == 0 or not np.isfinite(a).all():
         return f"non-finite values (NaN/inf) for {kpi}"
-    return kpi_domain_reason(kpi, a)
+    return kpi_domain_reason(kpi, a, bounds)

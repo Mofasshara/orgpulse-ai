@@ -114,6 +114,72 @@ The README and diagram reflect the *live* stack (Z-score + CUSUM). Isolation For
 retained as a tested component pending a multivariate integration; it does not run in the
 current pipeline.
 
+## Domain configuration (the engine is domain-agnostic)
+
+Everything above — detection, forecasting, the LangGraph DAG, the autonomous tick, the audit
+trail, the dashboard loader — is a **domain-agnostic engine**. Everything that differs between one
+regulated domain and another lives behind a single `Domain` value (`orgpulse/core/domain.py`):
+
+| The `Domain` carries | Pharma (this repo) |
+|----------------------|--------------------|
+| `generate(start, days, seed)` → streams | clinical, QC, supply generators |
+| `extract(streams, kpi)` → 1-D series | per-KPI extraction (validated raw rows before aggregation) |
+| `kpi_specs` — `KpiSpec(name, domain_bounds, detection_mode, is_hero, thresholds)` | 4 KPIs, all `TIMESERIES`, hero = `daily_enrollment` |
+| `hero_frame(streams)` → dated frame | the daily enrollment series for Prophet |
+| `analyst_system` / `recommend_system` | online (Claude) GxP / ICH-E6(R3) framing |
+| `offline_framing` / `offline_recommend` | keyless-stub GxP / CAPA language |
+| `compliance` | EU AI Act context |
+
+**This is a code interface, not a "swap a YAML file" platform** — generators and extractors are
+functions, and detection modes are engine strategies: **`TIMESERIES`** (z-score + calibrated
+CUSUM against a baseline), **`THRESHOLD`** (hard min/max rules on the latest value — e.g. a capital
+floor), and **`DATEMATH`** (deadline days-until arithmetic) are all wired and mutation-tested. A
+KPI declares its mode (and, for THRESHOLD, its warn/critical thresholds) in its `KpiSpec`;
+non-timeseries modes need only the latest value, not a full baseline.
+
+**Proven, not asserted:** `tests/core/test_second_domain.py` builds minimal *non-pharma* domains
+(a timeseries `DEMO`, a mixed-mode `MULTIMODE`, and a pure rule-mode `RULEONLY`) and runs the full
+stack on them — `run_tick`, the public `run_pipeline`, the LangGraph pipeline, the hero forecast,
+`verify_run`, and the offline framing — with **no engine changes**. Each test is
+**mutation-constrained**: reverting any single fix (the detect/forecast parity guard, the hero-frame
+date validation, timezone normalization and hero-`y` float coercion (a numeric-string/object y is
+normalized back into the frame Prophet consumes), and type/fail-closed guarding (every UNTRUSTED
+domain callable — `extract`, `hero_frame` — is wrapped in a broad `except Exception` so ANY failure,
+not just shape/conversion errors, yields DATA_QUALITY / no forecast, never a crash; only
+`BaseException`/`KeyboardInterrupt` escapes), the generic `streams` state, the domain-agnostic
+verifier (which also rejects an alerting artifact whose governed-recommendation stage is empty or
+blank, OR that is internally CONTRADICTORY — overall_severity disagreeing with the KPI findings,
+`alert` disagreeing with policy, a recommendation for an unassessed KPI, or forecast bounds violating
+lower ≤ yhat ≤ upper), the OverflowError-safe numeric gates (the rule detectors' `_latest_finite`,
+the shared `kpi_series_reason`, the timeseries `ensure_1d_finite`, the forecast y-coercion, the
+scalar `is_finite_scalar` family, and `BaselineMemory` loading all fail a huge int to
+DATA_QUALITY / False / a clear operator error), the guarded analyst + recommendation callables (a
+raising or malformed `llm.analyze`/`offline_recommend`/`dq_recommendation` never crashes and never
+empties the governed stage — a deterministic safe fallback is used), the atomic tick write (staged
+in a private dir and swapped in, so neither a malformed `generate()` NOR a mid-write filesystem
+failure leaves a partial run directory), the string-typed `Domain` framing fields and non-empty
+KPI-name validation, the domain-hero references, the `Domain` config validation — including THRESHOLD/DATEMATH
+threshold finiteness, strict band reachability (equal/inverted cutoffs rejected so no severity is
+unreachable) and unknown-key rejection, the per-mode detection dispatch, the rule detectors'
+standalone fail-safe on malformed/non-finite input — empty/ragged/2-D/non-numeric/0-D/NaN/inf all
+return the shared `score=None, flagged=True` DATA_QUALITY result — or the tick's timeseries-only
+baseline contract) makes a test fail — so the suite
+genuinely pins the invariants, it isn't a vacuous pass. Every node/loop takes
+`domain: Domain = PHARMA`, so pharma behavior is the default and byte-for-byte unchanged by this
+seam (golden-master gated).
+
+**Honest residuals (a new domain refines these; they are *framing/config*, not engine code — a
+second domain still produces correct, verifiable, non-pharma output despite them):**
+- The recommendation field/label is still named `capa_frame`/"CAPA Frame:" (pharma terminology; the
+  *value* is domain-supplied).
+- `governance/classification.py` renders a pharma EU-AI-Act document rather than reading
+  `domain.compliance`; a second domain supplies its own compliance content.
+- `Domain`'s `compliance` field is a plain (mutable) dict and the value isn't hashable — it's a
+  configuration record, not a hash key, so this is acceptable but noted.
+- The tick's `input_data_hash` hashes `streams.values()` in insertion order, so a `Domain.generate`
+  **must return its streams in a stable order** (Python dicts preserve construction order; every
+  generator does). This is a domain contract, stated on `Domain.generate`.
+
 ## Governance is not a feature — it's a cross-cut
 
 - **Art. 12 logging** → every run and recommendation is appended to a **hash-chained**

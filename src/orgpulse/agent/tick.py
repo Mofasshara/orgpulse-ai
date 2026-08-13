@@ -3,14 +3,17 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
+import shutil
 from dataclasses import asdict
 from datetime import date, datetime
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 from orgpulse.agent.baseline_memory import BaselineMemory
-from orgpulse.config import make_rng
+from orgpulse.core.domain import DetectionMode, Domain
 from orgpulse.detect.baseline import fit_baseline
 from orgpulse.detect.cusum import _MIN_BASELINE_N, cusum_detect
 from orgpulse.detect.validation import (
@@ -19,40 +22,15 @@ from orgpulse.detect.validation import (
     kpi_series_reason,
 )
 from orgpulse.detect.orchestrator import overall_severity
+from orgpulse.detect.rules import datemath_detect, threshold_detect
 from orgpulse.detect.types import Severity
 from orgpulse.detect.zscore import zscore_detect
-from orgpulse.generators.clinical import generate_clinical
-from orgpulse.generators.qc import generate_qc
-from orgpulse.generators.supply import generate_supply
+from orgpulse.domains.pharma import PHARMA
 from orgpulse.governance.audit import HashChainedAuditLog
 from orgpulse.pipeline.graph import render_report
 from orgpulse.pipeline.llm import make_llm
-from orgpulse.pipeline.nodes import analyst_node, forecast_node, recommendation_node, validated_clinical_daily
+from orgpulse.pipeline.nodes import analyst_node, forecast_node, recommendation_node
 from orgpulse.pipeline.state import Findings, KpiFinding, data_quality_finding
-
-
-def _kpi_series(clinical, qc, supply) -> list[tuple[str, "np.ndarray | None", "str | None"]]:
-    """Extract each KPI series for the tick, returning (kpi, array, structural_reason).
-
-    The clinical series goes through the SAME validated builder detection uses — so per-site
-    corruption that the daily sum would mask (a negative site total hidden inside a positive
-    aggregate), duplicate rows, NaT dates, and non-integer counts are caught here too. A
-    structural failure yields a DATA_QUALITY reason instead of an array; a missing/broken
-    column likewise. This keeps the autonomous tick and the `run` pipeline on one gate.
-    """
-    out: list[tuple[str, np.ndarray | None, str | None]] = []
-    try:
-        out.append(("daily_enrollment", validated_clinical_daily(clinical)["y"].to_numpy(), None))
-    except (KeyError, ValueError, TypeError) as exc:
-        out.append(("daily_enrollment", None, f"unusable clinical input ({exc})"))
-    for kpi, df, col in (("pass_rate", qc, "pass_rate"),
-                         ("calibration_offset", qc, "calibration_offset"),
-                         ("lead_time_days", supply, "lead_time_days")):
-        try:
-            out.append((kpi, df[col].to_numpy(), None))
-        except (KeyError, TypeError) as exc:
-            out.append((kpi, None, f"unusable input ({exc})"))
-    return out
 
 
 def run_tick(
@@ -66,6 +44,7 @@ def run_tick(
     offline: bool = True,
     out_root: Path = Path("runs"),
     now: str | None = None,
+    domain: Domain = PHARMA,
 ) -> Findings:
     """One autonomous tick: detect the recent PERIOD (``days_per_period``) against the
     REMEMBERED baseline (bootstrap on the first tick), forecast + reason, write run
@@ -78,11 +57,13 @@ def run_tick(
     unusable (degrading every post-bootstrap tick to DATA_QUALITY).
 
     Parameters are validated so the statistical preconditions the baseline window depends
-    on cannot be silently violated: ``days_per_period > 0``, ``baseline_days >= 60`` (the
-    CUSUM floor), and ``base_days >= max(baseline_days, days_per_period)`` so the very first
-    tick has both a full detection window and a full baseline window (matching the run
-    pipeline's rigor: an ingested stream shorter than ``baseline_days`` is DATA_QUALITY, not
-    a free bootstrap SAFE).
+    on cannot be silently violated: ``days_per_period > 0``, ``baseline_days >= 120`` (the
+    minimum-history contract), and ``base_days >= max(baseline_days, days_per_period)`` so the
+    very first tick has both a full detection window and a full baseline window (matching the run
+    pipeline's rigor: an ingested stream shorter than ``baseline_days`` is DATA_QUALITY, not a
+    free bootstrap SAFE). These preconditions apply only when the domain has a TIMESERIES KPI; a
+    pure rule-mode domain (all THRESHOLD/DATEMATH) assesses the latest value only and needs just
+    one readable row.
     """
     for name, val in (("tick_number", tick_number), ("days_per_period", days_per_period),
                       ("baseline_days", baseline_days), ("base_days", base_days)):
@@ -92,21 +73,42 @@ def run_tick(
         raise ValueError(f"tick_number must be >= 0, got {tick_number}")
     if days_per_period <= 0:
         raise ValueError(f"days_per_period must be > 0, got {days_per_period}")
-    if baseline_days < MIN_ASSESSMENT_DAYS:
-        raise ValueError(
-            f"baseline_days must be >= {MIN_ASSESSMENT_DAYS} (the shared minimum-history contract; "
-            f"the run pipeline needs the same 120 to make an assessment), got {baseline_days}"
-        )
-    if base_days < max(baseline_days, days_per_period):
-        raise ValueError(
-            f"base_days must be >= max(baseline_days={baseline_days}, days_per_period={days_per_period}) "
-            f"so tick 0 has a full detection window and a usable baseline, got {base_days}"
-        )
+    # The 120-day baseline contract exists ONLY for TIMESERIES KPIs (z-score + CUSUM need it).
+    # A pure rule-mode domain (all THRESHOLD/DATEMATH) assesses the latest value only
+    # (`min_history_for` == 1), so forcing baseline_days >= 120 on it is wrong — and was a
+    # run-vs-tick divergence (run_pipeline already handled a one-point rule domain). Enforce the
+    # full contract when any KPI is TIMESERIES; otherwise require just a single readable row.
+    has_timeseries = any(s.detection_mode is DetectionMode.TIMESERIES for s in domain.kpi_specs)
+    if has_timeseries:
+        if baseline_days < MIN_ASSESSMENT_DAYS:
+            raise ValueError(
+                f"baseline_days must be >= {MIN_ASSESSMENT_DAYS} (the shared minimum-history contract; "
+                f"the run pipeline needs the same 120 to make an assessment), got {baseline_days}"
+            )
+        if base_days < max(baseline_days, days_per_period):
+            raise ValueError(
+                f"base_days must be >= max(baseline_days={baseline_days}, days_per_period={days_per_period}) "
+                f"so tick 0 has a full detection window and a usable baseline, got {base_days}"
+            )
+    elif base_days < 1:
+        raise ValueError(f"base_days must be >= 1 (need at least the latest value), got {base_days}")
     days = base_days + tick_number * days_per_period
     start = date(2026, 1, 1)
-    clinical = generate_clinical(start, days, make_rng(seed))
-    qc = generate_qc(start, days, make_rng(seed + 1))
-    supply = generate_supply(start, days, make_rng(seed + 2))
+    # generate() is a Domain-supplied callable. Validate its output BEFORE any assessment or writing
+    # so a malformed generator (returns None/non-dict, empty, or non-DataFrame members, or raises)
+    # fails fast with a clear error and leaves NO partial, unverifiable run directory behind.
+    try:
+        streams = domain.generate(start, days, seed)
+    except Exception as exc:
+        raise ValueError(f"domain {domain.name!r} generate() failed: {exc}") from exc
+    if not isinstance(streams, dict) or not streams or not all(
+        isinstance(df, pd.DataFrame) for df in streams.values()
+    ):
+        raise ValueError(
+            f"domain {domain.name!r} generate() must return a non-empty dict of DataFrames, "
+            f"got {type(streams).__name__}"
+        )
+    bounds = domain.bounds()
 
     remembered = memory.load()
     n = days_per_period
@@ -114,10 +116,17 @@ def run_tick(
     new_baselines = {}
     used_bootstrap = False
 
-    for kpi, series, structural_reason in _kpi_series(clinical, qc, supply):
-        # A structural failure (unusable clinical rows / missing column) is DATA_QUALITY.
-        if structural_reason is not None:
-            findings.append(data_quality_finding(kpi, structural_reason))
+    for spec in domain.kpi_specs:
+        kpi = spec.name
+        # Extraction goes through the domain (clinical is validated per-row before aggregation,
+        # so per-site corruption masked by the daily sum is caught). Any structural failure
+        # (missing stream/column, ragged data) is DATA_QUALITY, not a crash.
+        try:
+            series = domain.extract(streams, kpi)
+        except Exception as exc:
+            # extract is UNTRUSTED domain code: ANY exception (not just shape/conversion errors)
+            # means DATA_QUALITY, never a crash of the autonomous tick. BaseException escapes.
+            findings.append(data_quality_finding(kpi, f"unusable input ({exc})"))
             continue
         # Validate the WHOLE ingested series through the shared gate (numeric, 1-D, >= a full
         # baseline window, all-finite, in-domain). Requiring baseline_days (not just the
@@ -125,11 +134,22 @@ def run_tick(
         # divergence where a too-short stream read a free bootstrap SAFE. A violation
         # ANYWHERE — including in the baseline history — is DATA_QUALITY, and NO baseline is
         # persisted from corrupt data (a bad baseline would poison the next tick's detection).
-        reason = kpi_series_reason(kpi, series, min_len=baseline_days)
+        # Timeseries needs a full baseline window; threshold/deadline checks need only the latest.
+        min_len = baseline_days if spec.detection_mode is DetectionMode.TIMESERIES else 1
+        reason = kpi_series_reason(kpi, series, min_len=min_len, bounds=bounds)
         if reason is not None:
             findings.append(data_quality_finding(kpi, reason))
             continue
         s = np.asarray(series, dtype=float)
+
+        # Non-timeseries modes assess the LATEST value directly — no baseline, no remembered state.
+        if spec.detection_mode is not DetectionMode.TIMESERIES:
+            r = (threshold_detect(s, spec.thresholds, kpi) if spec.detection_mode is DetectionMode.THRESHOLD
+                 else datemath_detect(s, spec.thresholds, kpi))
+            v = float(s[-1])
+            findings.append(KpiFinding(kpi=kpi, severity=r.severity.name, detail=r.detail,
+                                       latest_value=v if math.isfinite(v) else None))
+            continue
 
         # Established trailing baseline (long window, now validated finite + in-domain) becomes
         # the NEXT tick's baseline; kept longer than the detection window so CUSUM's ≥60-sample
@@ -146,7 +166,7 @@ def run_tick(
         # which flattens every z-score toward 0), or its sample count doesn't match the window
         # it claims to summarise (a legitimate save always has n == baseline_days).
         if prior is not None and (
-            not baseline_domain_feasible(kpi, prior.mean, prior.std) or prior.n != baseline_days
+            not baseline_domain_feasible(kpi, prior.mean, prior.std, bounds) or prior.n != baseline_days
         ):
             findings.append(data_quality_finding(kpi, "remembered baseline is corrupt/implausible (memory)"))
             continue
@@ -174,11 +194,13 @@ def run_tick(
     else:
         overall = Severity.SAFE
 
-    forecast = forecast_node({"clinical": clinical})["forecast"]
-    llm = make_llm(offline)
+    # Pass the streams AND the detection findings so forecast_node can enforce detect/forecast
+    # parity (no forecast for a hero detection ruled DATA_QUALITY).
+    forecast = forecast_node({"streams": streams, "kpi_findings": findings}, domain)["forecast"]
+    llm = make_llm(offline, domain=domain)
     state = {"kpi_findings": findings, "overall_severity": overall.name, "forecast": forecast}
-    analysis = analyst_node(state, llm)["analysis"]
-    rec_out = recommendation_node(state, llm)
+    analysis = analyst_node(state, llm, domain)["analysis"]
+    rec_out = recommendation_node(state, llm, domain)
 
     generated_at = now or datetime.now().isoformat(timespec="seconds")
     run_id = f"tick-{tick_number}-{generated_at}"
@@ -199,6 +221,23 @@ def run_tick(
         ).encode("utf-8")
     ).hexdigest()
 
+    # Article 12 lineage input hash of the actual input frames. Computed ONCE here (streams is
+    # validated above) — never inside _write, so the write path can't fail on it after creating files.
+    try:
+        input_data_hash = hashlib.sha256(
+            "".join(df.to_csv(index=False) for df in streams.values()).encode("utf-8")
+        ).hexdigest()
+    except (ValueError, TypeError, OverflowError, UnicodeError) as exc:
+        # Raw stream data that cannot be canonically serialized (e.g. a value exceeding
+        # Python's int-string conversion limit) is corrupt generate() output — the same
+        # contract as the malformed-generate() check above. Fail with a clear, operator-facing
+        # error and leave NO partial/unverifiable run directory, rather than letting a raw
+        # pandas/stdlib exception escape mid-tick.
+        raise ValueError(
+            f"domain {domain.name!r} generate() produced input data that cannot be hashed for "
+            f"lineage (corrupt/out-of-range values): {exc}"
+        ) from exc
+
     def _write(out_dir: Path, *, is_latest: bool) -> None:
         # Timestamped run dirs are durable, append-only history: never overwrite one (a
         # same-second, same-tick re-run would otherwise silently destroy a prior run).
@@ -208,38 +247,72 @@ def run_tick(
                 f"refusing to overwrite existing run directory {out_dir} "
                 "(durable run history); use a distinct timestamp or tick_number"
             )
-        out_dir.mkdir(parents=True, exist_ok=True)
+        # Compute ALL content + integrity hashes first.
         fj = json.dumps(findings_obj.to_json_dict(), indent=2, allow_nan=False)
         report_text = render_report(findings_obj)
-        (out_dir / "findings.json").write_text(fj)
-        (out_dir / "report.md").write_text(report_text)
-        # Article 12 lineage: real inputs (seed + params + input-frame hash) + output integrity
-        # hashes (findings + report), so a decision is genuinely reproducible.
         findings_hash = hashlib.sha256(fj.encode("utf-8")).hexdigest()
         report_hash = hashlib.sha256(report_text.encode("utf-8")).hexdigest()
-        input_data_hash = hashlib.sha256(
-            (clinical.to_csv(index=False) + qc.to_csv(index=False) + supply.to_csv(index=False)).encode("utf-8")
-        ).hexdigest()
-        # Each run dir holds exactly THIS run: clear any prior audit log (the reusable
-        # `latest/` dir would otherwise accumulate across ticks and diverge from
-        # findings.json/report.md). Durable per-run records live in the timestamped dirs.
-        (out_dir / "audit.jsonl").unlink(missing_ok=True)
-        audit = HashChainedAuditLog(out_dir / "audit.jsonl")
-        audit.append(
-            "run",
-            {"overall_severity": overall.name, "alert": findings_obj.alert, "generated_at": generated_at,
-             "model": model, "offline": offline, "findings_hash": findings_hash,
-             "report_hash": report_hash, "input_data_hash": input_data_hash,
-             "baseline_input_hash": baseline_input_hash,
-             "seed": seed, "base_days": base_days, "days_per_period": days_per_period,
-             "baseline_days": baseline_days, "tick_number": tick_number, "used_bootstrap": used_bootstrap},
-            trace_id=run_id, timestamp=generated_at,
-        )
-        for i, rec in enumerate(findings_obj.recommendations):
+
+        # Write into a PRIVATE staging dir, then atomically swap it into place. This makes the
+        # durable run directory all-or-nothing: a mid-write failure (e.g. an OSError on the 2nd
+        # file, a full disk) removes the staging dir and leaves NO partial, unverifiable run dir.
+        staging = out_dir.parent / f".{out_dir.name}.staging-{os.getpid()}"
+        if staging.exists():
+            shutil.rmtree(staging)
+        staging.mkdir(parents=True, exist_ok=True)
+        try:
+            (staging / "findings.json").write_text(fj)
+            (staging / "report.md").write_text(report_text)
+            audit = HashChainedAuditLog(staging / "audit.jsonl")
             audit.append(
-                "recommendation", {**asdict(rec), "model": model, "findings_hash": findings_hash},
-                trace_id=f"{run_id}:{rec.kpi}:{i}", timestamp=generated_at,
+                "run",
+                {"overall_severity": overall.name, "alert": findings_obj.alert, "generated_at": generated_at,
+                 "model": model, "offline": offline, "findings_hash": findings_hash,
+                 "report_hash": report_hash, "input_data_hash": input_data_hash,
+                 "baseline_input_hash": baseline_input_hash,
+                 "seed": seed, "base_days": base_days, "days_per_period": days_per_period,
+                 "baseline_days": baseline_days, "tick_number": tick_number, "used_bootstrap": used_bootstrap},
+                trace_id=run_id, timestamp=generated_at,
             )
+            for i, rec in enumerate(findings_obj.recommendations):
+                audit.append(
+                    "recommendation", {**asdict(rec), "model": model, "findings_hash": findings_hash},
+                    trace_id=f"{run_id}:{rec.kpi}:{i}", timestamp=generated_at,
+                )
+        except BaseException:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+        # Swap in. The durable timestamped dir does not exist here (guarded above), so os.replace is
+        # a single atomic rename directly onto `staging`.
+        if not out_dir.exists():
+            try:
+                os.replace(staging, out_dir)
+            except BaseException:
+                shutil.rmtree(staging, ignore_errors=True)
+                raise
+            return
+        # `latest/` is a reusable mirror and IS being overwritten: os.replace can't atomically
+        # clobber a non-empty directory, so the previous approach rmtree'd it first — but a
+        # failure on the subsequent os.replace then left `latest/` deleted with nothing in its
+        # place. Instead, rename the previous snapshot aside (atomic, so `latest/` is never
+        # momentarily absent) and only remove it once the new snapshot is safely installed; on
+        # ANY failure in this block, restore the previous snapshot and clean up staging so the
+        # last verified `latest/` survives and no orphaned staging dir is left behind.
+        backup = out_dir.parent / f".{out_dir.name}.prev-{os.getpid()}"
+        if backup.exists():
+            shutil.rmtree(backup)
+        try:
+            os.replace(out_dir, backup)
+        except BaseException:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+        try:
+            os.replace(staging, out_dir)
+        except BaseException:
+            os.replace(backup, out_dir)
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+        shutil.rmtree(backup, ignore_errors=True)
 
     # Run-dir name includes the tick number so two ticks that share a wall-clock second
     # (default timestamps have only second precision) don't collide onto the same directory.

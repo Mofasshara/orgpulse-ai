@@ -177,10 +177,14 @@ def _seal_run(run_dir: Path, findings: dict, *, report: str = "report", payload_
     from orgpulse.governance.audit import HashChainedAuditLog
 
     run_dir.mkdir(parents=True, exist_ok=True)
-    # Fill in schema-required top-level fields unless the test overrode them.
+    # Fill in schema-required top-level fields unless the test overrode them. Every valid Domain
+    # has >=1 KPI and verify_run now rejects an empty kpi_findings (a false all-clear), so the
+    # default includes one SAFE finding consistent with the default SAFE/alert=False severity.
     findings = {"run_id": "tick-0-t", "generated_at": "2026-01-01T00:00:00",
-                "overall_severity": "SAFE", "kpi_findings": [], "forecast": {},
-                "recommendations": [], **findings}
+                "overall_severity": "SAFE",
+                "kpi_findings": [{"kpi": "daily_enrollment", "severity": "SAFE", "detail": "nominal",
+                                  "latest_value": 1.0}],
+                "forecast": {}, "recommendations": [], "alert": False, **findings}
     fj = json.dumps(findings)
     (run_dir / "findings.json").write_text(fj)
     (run_dir / "report.md").write_text(report)
@@ -204,7 +208,7 @@ def test_verify_run_rejects_structurally_invalid_findings_even_when_hash_bound(t
     """#4: a hash-consistent run whose findings has recommendations as a non-list (or bad
     kpi_findings/forecast shape) must fail closed — the dashboard must never render it."""
     d = _seal_run(tmp_path / "bad_recs",
-                  {"overall_severity": "SAFE", "kpi_findings": [], "forecast": {}, "recommendations": "not-a-list"})
+                  {"overall_severity": "SAFE", "forecast": {}, "recommendations": "not-a-list"})
     ok, reason = data.verify_run(d)
     assert ok is False and "recommendations" in reason
 
@@ -216,13 +220,16 @@ def test_verify_run_rejects_structurally_invalid_findings_even_when_hash_bound(t
 def test_verify_run_rejects_nested_schema_malformations(tmp_path: Path):
     """#4 (r8): verify_run checked only top-level container TYPES; nested malformations passed as
     verified and crashed the app. Each hash-consistent-but-invalid shape must fail closed."""
-    valid = {"kpi_findings": [], "forecast": {}, "recommendations": []}
+    valid = {"forecast": {}, "recommendations": []}
     cases = {
         "kf_not_object": {**valid, "kpi_findings": ["not-an-object"]},
         "kf_missing_severity": {**valid, "kpi_findings": [{"kpi": "x"}]},
         "rec_not_object": {**valid, "recommendations": ["not-an-object"]},
         "rec_missing_text": {**valid, "recommendations": [{"kpi": "x", "capa_frame": "C", "review_status": "P", "disclaimer": "d"}]},
         "forecast_only_h30": {**valid, "forecast": {"daily_enrollment": {"h30": {"yhat": 1, "lower": 0, "upper": 2}}}},
+        # r10 #4: a metadata-only forecast (the dashboard would pick this first key as the hero and
+        # crash on h30) must fail closed — verify the hero the renderer actually uses.
+        "forecast_metadata_only": {**valid, "forecast": {"calibration": {"applied": True, "scale_factor": 2.0}}},
         "generated_at_numeric": {**valid, "generated_at": 123},
         # r9 #3: non-finite numbers, malformed calibration, bad enum / boolean
         "nan_latest_value": {**valid, "kpi_findings": [{"kpi": "x", "severity": "SAFE", "detail": "d", "latest_value": float("nan")}]},
@@ -252,9 +259,46 @@ def test_load_history_survives_non_string_generated_at(tmp_path: Path):
     assert len(hist) == 2
 
 
+def _hero_fc(hero):
+    horizons = {h: {"yhat": 1.0, "lower": 0.0, "upper": 2.0} for h in ("h30", "h60", "h90")}
+    # nominal is always present in real cal_meta (both the applied and fallback branches of
+    # forecast_node) — a fixture omitting it doesn't represent a real artifact.
+    return {hero: {"calibration": {"applied": False, "raw_coverage": None, "nominal": 0.9}, **horizons}}
+
+
+def _kf(kpi, sev="SAFE"):
+    return [{"kpi": kpi, "severity": sev, "detail": "d", "latest_value": 1.0}]
+
+
+def test_verify_run_validates_any_hero_and_rejects_multi_or_malformed_forecast(tmp_path: Path):
+    """r10/r11 #4: the verifier must validate WHICHEVER hero the dashboard renders (not only
+    pharma's), accept a valid non-pharma hero, and reject multi-key or malformed forecasts."""
+    base = {"recommendations": []}
+    # a valid NON-pharma hero forecast, for an ASSESSED KPI, must verify (mutation: restore the
+    # daily_enrollment-only check)
+    ok, _ = data.verify_run(_seal_run(
+        tmp_path / "npl_ok", {**base, "kpi_findings": _kf("npl_ratio"), "forecast": _hero_fc("npl_ratio")}))
+    assert ok is True
+    # multiple top-level forecast keys are structurally ambiguous -> reject
+    two = {**_hero_fc("risk"), **_hero_fc("other")}
+    assert data.verify_run(_seal_run(
+        tmp_path / "twokeys", {**base, "kpi_findings": _kf("risk"), "forecast": two}))[0] is False
+    # a valid hero PLUS a hidden malformed key -> reject (the hidden one would escape a first-key-only check)
+    hidden = {**_hero_fc("risk"), "hidden_bad": {"h30": {}}}
+    assert data.verify_run(_seal_run(
+        tmp_path / "hidden", {**base, "kpi_findings": _kf("risk"), "forecast": hidden}))[0] is False
+    # a malformed non-pharma hero (missing h60/h90) -> reject
+    bad = {"npl_ratio": {"h30": {"yhat": 1, "lower": 0, "upper": 2}}}
+    assert data.verify_run(_seal_run(
+        tmp_path / "npl_bad", {**base, "kpi_findings": _kf("npl_ratio"), "forecast": bad}))[0] is False
+    # a forecast for a KPI that was never assessed is an invented entity -> reject
+    assert data.verify_run(_seal_run(
+        tmp_path / "unassessed", {**base, "kpi_findings": _kf("npl_ratio"), "forecast": _hero_fc("invented")}))[0] is False
+
+
 def test_verify_run_requires_lineage_fields(tmp_path: Path):
     """#6: a run advertised as Article-12 lineage-complete must not verify without its lineage."""
-    good = {"overall_severity": "SAFE", "kpi_findings": [], "forecast": {}, "recommendations": []}
+    good = {"overall_severity": "SAFE", "forecast": {}, "recommendations": []}
     assert data.verify_run(_seal_run(tmp_path / "ok", good))[0] is True
     for missing in ("input_data_hash", "seed", "model"):
         d = _seal_run(tmp_path / f"no_{missing}", good, drop_fields=(missing,))

@@ -35,7 +35,11 @@ SEV = {
     "CRITICAL": ("#dc2626", "🔴", "Critical"),
     "DATA_QUALITY": ("#64748b", "⚪", "Data quality"),
 }
-HERO = "daily_enrollment"
+# The hero KPI is whatever the compute plane forecasted — read it from the artifact so the
+# dashboard is domain-agnostic (pharma "daily_enrollment", banking "npl_ratio", ...) without
+# importing any domain code (split plane preserved).
+def _hero_kpi(findings: dict) -> str | None:
+    return next(iter(findings.get("forecast", {})), None)
 
 RUNS_ROOT = Path(os.environ.get("ORGPULSE_RUNS", "runs"))
 
@@ -90,7 +94,7 @@ if not audit_ok:
     with st.expander("Show unverified raw findings (not an operational status)"):
         try:
             st.code((latest / "findings.json").read_text()[:5000], language="json")
-        except OSError:
+        except (OSError, UnicodeError):
             st.write("(findings.json is unreadable)")
     st.stop()
 
@@ -140,10 +144,11 @@ st.divider()
 # ── Forecast fan (hero KPI) ─────────────────────────────────────────────────
 left, right = st.columns([3, 2])
 with left:
-    st.subheader(f"Forecast — {HERO}")
-    fc = findings.get("forecast", {}).get(HERO)
+    hero = _hero_kpi(findings)
+    st.subheader(f"Forecast — {hero}" if hero else "Forecast")
+    fc = findings.get("forecast", {}).get(hero) if hero else None
     if fc:
-        anchor = next((k.get("latest_value") for k in kfs if k["kpi"] == HERO), None)
+        anchor = next((k.get("latest_value") for k in kfs if k["kpi"] == hero), None)
         xs, yhat, lower, upper = [0], [anchor], [anchor], [anchor]
         for h in ("h30", "h60", "h90"):
             xs.append(int(h[1:]))
@@ -158,7 +163,7 @@ with left:
                                  name="forecast"))
         fig.update_layout(
             height=340, margin=dict(l=10, r=10, t=10, b=10),
-            xaxis_title="days ahead", yaxis_title=HERO,
+            xaxis_title="days ahead", yaxis_title=hero,
             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
             legend=dict(orientation="h", yanchor="bottom", y=1.0),
         )

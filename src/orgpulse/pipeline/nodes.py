@@ -6,9 +6,18 @@ from typing import TypedDict
 import numpy as np
 import pandas as pd
 
+from orgpulse.core.domain import (
+    DetectionMode,
+    Domain,
+    KpiSpec,
+    _default_dq_recommendation,
+    _default_offline_recommend,
+)
 from orgpulse.detect.orchestrator import detect_kpi, overall_severity
+from orgpulse.detect.rules import datemath_detect, min_history_for, threshold_detect
 from orgpulse.detect.types import Severity
 from orgpulse.detect.validation import MIN_ASSESSMENT_DAYS, kpi_domain_reason, kpi_series_reason
+from orgpulse.domains.pharma import PHARMA
 from orgpulse.forecast.calibration import interval_calibration
 from orgpulse.forecast.prophet_forecaster import forecast_kpi, series_from_generator
 from orgpulse.pipeline.llm import LLMClient
@@ -59,67 +68,58 @@ class ForecastNodeOutput(TypedDict):
     forecast: dict
 
 
-def _kpi_finding(kpi: str, series) -> KpiFinding:
+def _kpi_finding(spec: KpiSpec, series, bounds: dict) -> KpiFinding:
     """
     Assess one KPI series and ALWAYS return a finding. This is the single fail-safe gate:
     the default is DATA_QUALITY, and SAFE/WARNING/CRITICAL are returned only after the data
-    is affirmatively validated (1-D, numeric, >=120 points) AND detected. A short, missing,
-    ragged, or non-numeric series can never be silently omitted or read as SAFE.
-
-    - detail comes from the *driving* detector (the one whose severity == the max severity).
-    - latest_value is a plain Python float (NaN/inf -> None) for JSON safety.
-    - a series shorter than 120 points, non-1-D, non-numeric, non-finite, or with any value
-      outside the KPI's real-world domain becomes DATA_QUALITY (never silently skipped).
+    is affirmatively validated (1-D, numeric, >=120 points, in-domain) AND detected. A short,
+    missing, ragged, non-numeric, or out-of-domain series can never be omitted or read as SAFE.
+    Detection dispatches on the KPI's mode (TIMESERIES / THRESHOLD / DATEMATH — all wired).
     """
-    reason = kpi_series_reason(kpi, series, min_len=MIN_ASSESSMENT_DAYS)  # 1-D, numeric, finite, in-domain, >= shared minimum
+    reason = kpi_series_reason(spec.name, series, min_len=min_history_for(spec.detection_mode), bounds=bounds)
     if reason is not None:
-        return data_quality_finding(kpi, reason)
+        return data_quality_finding(spec.name, reason)
     s = np.asarray(series, dtype=float)
-    baseline, recent = s[:-30], s[-30:]
-    results = detect_kpi(baseline, recent, kpi=kpi)  # returns DATA_QUALITY on non-finite data
-    sev = overall_severity(results)
-    driving = next((r for r in results if r.severity == sev), results[0])  # detail from the driving detector
-    v = float(recent[-1])
+    if spec.detection_mode is DetectionMode.TIMESERIES:
+        baseline, recent = s[:-30], s[-30:]
+        results = detect_kpi(baseline, recent, kpi=spec.name)  # returns DATA_QUALITY on non-finite data
+        sev = overall_severity(results)
+        sev_name = sev.name
+        detail = next((r for r in results if r.severity == sev), results[0]).detail  # driving detector
+    elif spec.detection_mode is DetectionMode.THRESHOLD:
+        r = threshold_detect(s, spec.thresholds, spec.name)
+        sev_name, detail = r.severity.name, r.detail
+    else:  # DATEMATH
+        r = datemath_detect(s, spec.thresholds, spec.name)
+        sev_name, detail = r.severity.name, r.detail
+    v = float(s[-1])
     latest = v if math.isfinite(v) else None
-    return KpiFinding(kpi=kpi, severity=sev.name, detail=driving.detail, latest_value=latest)
+    return KpiFinding(kpi=spec.name, severity=sev_name, detail=detail, latest_value=latest)
 
 
-def detect_node(state: PipelineState) -> DetectNodeOutput:
+def detect_node(state: PipelineState, domain: Domain = PHARMA) -> DetectNodeOutput:
     """
-    Detect anomalies for each monitored KPI.
-
-    Hero KPI: clinical daily_enrollment (aggregated across sites)
-    QC KPIs: pass_rate, calibration_offset
-    Supply KPI: lead_time_days
-
-    Each KPI series is split into a >=90-point baseline and a 30-point recent
-    window and run through detect_kpi. Every expected KPI ALWAYS yields a finding: an
-    unusable series (short, non-numeric, non-finite, or out of domain) becomes DATA_QUALITY
-    rather than being skipped.
+    Detect anomalies for each of the domain's KPIs. Every KPI ALWAYS yields a finding: an
+    unusable series (missing, malformed, short, non-finite, or out of domain) becomes
+    DATA_QUALITY rather than being skipped — the "bad data never crashes, never reads SAFE"
+    contract at the node level. Extraction happens inside the guard so a missing stream/column
+    or a ragged array is DATA_QUALITY, not a crash.
     """
-    # Each extractor pulls one KPI series from the (possibly malformed) input. Extraction and
-    # array conversion happen INSIDE the guard below so that a missing column, a 2-D/ragged
-    # column, or any schema corruption becomes a DATA_QUALITY finding rather than crashing the
-    # run — upholding the "bad data never crashes, never reads SAFE" contract at the node level.
-    extractors: list[tuple[str, callable]] = []
-    if "clinical" in state:
-        extractors.append(
-            ("daily_enrollment", lambda: validated_clinical_daily(state["clinical"])["y"].to_numpy())
-        )
-    if "qc" in state:
-        extractors.append(("pass_rate", lambda: state["qc"]["pass_rate"].to_numpy()))
-        extractors.append(("calibration_offset", lambda: state["qc"]["calibration_offset"].to_numpy()))
-    if "supply" in state:
-        extractors.append(("lead_time_days", lambda: state["supply"]["lead_time_days"].to_numpy()))
-
+    # Streams live under a generic "streams" key when driven by the graph; direct callers may
+    # pass the streams dict as the state itself. Support both.
+    streams = state.get("streams") or state
+    bounds = domain.bounds()
     findings: list[KpiFinding] = []
-    for kpi, extract in extractors:
+    for spec in domain.kpi_specs:
         try:
-            series = extract()
-        except (KeyError, ValueError, TypeError, IndexError):
-            findings.append(data_quality_finding(kpi, "unusable input (missing column / malformed data)"))
+            series = domain.extract(streams, spec.name)
+        except Exception:
+            # extract is UNTRUSTED domain code: ANY exception (missing stream, wrong shape, overflow,
+            # or an arbitrary RuntimeError/OSError from inside it) means "this KPI is unusable" ->
+            # DATA_QUALITY, never a crash. Only BaseException (KeyboardInterrupt/SystemExit) escapes.
+            findings.append(data_quality_finding(spec.name, "unusable input (extract failed)"))
             continue
-        findings.append(_kpi_finding(kpi, series))  # always returns a finding (never None)
+        findings.append(_kpi_finding(spec, series, bounds))  # always returns a finding (never None)
 
     # DATA_QUALITY dominates (mirrors detect.orchestrator.overall_severity): if any KPI
     # could not be assessed — or nothing was analyzable at all — the run is DATA_QUALITY,
@@ -133,10 +133,10 @@ def detect_node(state: PipelineState) -> DetectNodeOutput:
     return {"kpi_findings": findings, "overall_severity": overall.name}
 
 
-def forecast_node(state: PipelineState) -> ForecastNodeOutput:
+def forecast_node(state: PipelineState, domain: Domain = PHARMA) -> ForecastNodeOutput:
     """
-    Forecast the hero KPI (clinical daily_enrollment) at horizons 30, 60, 90 days,
-    with a calibration factor APPLIED to the published interval (not just diagnosed).
+    Forecast the domain's hero KPI at horizons 30, 60, 90 days, with a calibration factor
+    APPLIED to the published interval (not just diagnosed).
 
     Raw Prophet intervals are overconfident (~70% coverage against a nominal 90%). We
     fit a widening scale via rolling-origin folds (`interval_calibration`) and apply it
@@ -148,22 +148,60 @@ def forecast_node(state: PipelineState) -> ForecastNodeOutput:
     Returns forecast[kpi] with per-horizon {yhat, lower, upper} plus a `calibration` block.
     """
     forecast_result = {}
+    hero = domain.hero()
 
-    if "clinical" in state:
-        # Build the daily series through the SAME validated builder + series check that
-        # detection uses — so a hero KPI that detection rules DATA_QUALITY (out-of-domain,
-        # duplicate rows, NaT dates, non-integer/negative per-site counts, non-finite, too
-        # short) never yields a numeric forecast. One validator, both consumers.
+    # PARITY (engine invariant): detection runs before forecast. If detection ruled the hero
+    # unusable (DATA_QUALITY), publish NO forecast — regardless of whether the domain's
+    # `extract` and `hero_frame` happen to agree. This encodes "one validated verdict, both
+    # consumers" at the engine level instead of trusting each domain to keep them consistent.
+    hero_finding = next((f for f in state.get("kpi_findings", []) if getattr(f, "kpi", None) == hero), None)
+    if hero_finding is not None and hero_finding.severity == "DATA_QUALITY":
+        return {"forecast": forecast_result}
+
+    if domain.hero_frame is not None:
+        # Build the hero's dated series and validate it FULLY before Prophet sees it — both the
+        # `y` values (via the shared series check) AND the `ds` dates (present, parseable,
+        # non-null, unique). Prophet crashes on NaT/missing ds and silently mis-forecasts on
+        # duplicate ds, so a corrupt hero_frame must yield NO forecast, never a crash or a
+        # bogus one. (Pharma's builder already guarantees clean dates; this protects any domain.)
+        streams = state.get("streams") or state
         try:
-            daily_df = validated_clinical_daily(state["clinical"])
+            daily_df = domain.hero_frame(streams)
+            # hero_frame is domain-supplied: a buggy one may return the WRONG TYPE (None, an ndarray,
+            # a dict) or raise while building. Fail closed to "no forecast", never crash the run.
+            # (AttributeError is caught below because `.columns`/`.dt` on a non-DataFrame raises it.)
+            if not isinstance(daily_df, pd.DataFrame):
+                return {"forecast": forecast_result}
+            if "ds" not in daily_df.columns or "y" not in daily_df.columns:
+                return {"forecast": forecast_result}
+            ds = pd.to_datetime(daily_df["ds"], errors="coerce")
+            if ds.isna().any() or ds.duplicated().any():
+                return {"forecast": forecast_result}
+            # Prophet rejects timezone-aware ds ("Column ds has timezone specified"). A tz-aware
+            # frame is VALID input, so normalize it to tz-naive (canonicalized to UTC) and write it
+            # BACK to the frame that forecast_kpi/interval_calibration consume — else the original
+            # tz-aware frame reaches Prophet and crashes. Pharma builds tz-naive dates, so this is a
+            # no-op there (guaranteed byte-identical: the frame is only rebuilt when tz is present).
+            if getattr(ds.dt, "tz", None) is not None:
+                daily_df = daily_df.assign(ds=ds.dt.tz_convert("UTC").dt.tz_localize(None))
+            # Validate AND normalize `y` to float, then write it BACK — symmetric with the ds fix.
+            # A numeric-string/object y column coerces here for validation but, if the ORIGINAL
+            # frame were handed to Prophet, would crash it ("'>=' not supported between str and
+            # float"). Assigning the coerced float array back guarantees Prophet/calibration see
+            # floats. (Pharma's y is already float64, so the values are identical -> byte-identical.)
             y = daily_df["y"].to_numpy(dtype=float)
-        except (KeyError, ValueError, TypeError):
+            daily_df = daily_df.assign(y=y)
+        except Exception:
+            # hero_frame is UNTRUSTED domain code, and so is everything that consumes its output
+            # here. ANY exception (wrong return type, overflow, non-numeric y, or an arbitrary
+            # RuntimeError/OSError from inside it) means "no forecast", never a crash. Only
+            # BaseException (KeyboardInterrupt/SystemExit) escapes.
             return {"forecast": forecast_result}
-        if kpi_series_reason("daily_enrollment", y, min_len=MIN_ASSESSMENT_DAYS) is not None:
+        if kpi_series_reason(hero, y, min_len=MIN_ASSESSMENT_DAYS, bounds=domain.bounds()) is not None:
             return {"forecast": forecast_result}
 
         # Forecast at horizons 30, 60, 90
-        fc = forecast_kpi(daily_df, "daily_enrollment", horizons=(30, 60, 90))
+        fc = forecast_kpi(daily_df, hero, horizons=(30, 60, 90))
 
         # Fit the interval-calibration scale on this history and APPLY it to the
         # published bounds. Guard short histories: fall back to raw, uncalibrated.
@@ -184,24 +222,30 @@ def forecast_node(state: PipelineState) -> ForecastNodeOutput:
                 "note": "history too short to calibrate; raw Prophet interval published",
             }
 
-        forecast_result["daily_enrollment"] = {"calibration": cal_meta}
+        forecast_result[hero] = {"calibration": cal_meta}
         for h in (30, 60, 90):
             fc_at_h = fc.at_horizon(h)
             yhat = float(fc_at_h["yhat"])
-            lower = float(fc_at_h["yhat_lower"])
-            upper = float(fc_at_h["yhat_upper"])
-            forecast_result["daily_enrollment"][f"h{h}"] = {
-                "yhat": yhat,
-                "lower": yhat - scale * (yhat - lower),  # widen by the calibration scale
-                "upper": yhat + scale * (upper - yhat),
-            }
+            lower_raw = float(fc_at_h["yhat_lower"])
+            upper_raw = float(fc_at_h["yhat_upper"])
+            lower = yhat - scale * (yhat - lower_raw)  # widen by the calibration scale
+            upper = yhat + scale * (upper_raw - yhat)
+            if not (math.isfinite(yhat) and math.isfinite(lower) and math.isfinite(upper)):
+                # An extreme hero value (e.g. a finite value at the float64 boundary) can push
+                # Prophet's trend/uncertainty arithmetic, or the calibration scaling above, past
+                # float64 range into inf/NaN. A non-finite bound is not a valid forecast —
+                # publishing one would crash downstream JSON serialization (allow_nan=False) or
+                # display a bogus number. Suppress the WHOLE forecast rather than a partial one
+                # with some horizons finite and others not.
+                return {"forecast": {}}
+            forecast_result[hero][f"h{h}"] = {"yhat": yhat, "lower": lower, "upper": upper}
 
     return {"forecast": forecast_result}
 
 
-def analyst_node(state: PipelineState, llm: LLMClient) -> dict:
+def analyst_node(state: PipelineState, llm: LLMClient, domain: Domain = PHARMA) -> dict:
     """
-    Analyze findings and forecast via LLM.
+    Analyze findings and forecast via LLM, using the domain's analyst framing.
 
     Builds a prompt from kpi_findings + forecast, calls llm.analyze,
     returns {"analysis": <str>}.
@@ -214,8 +258,9 @@ def analyst_node(state: PipelineState, llm: LLMClient) -> dict:
     for f in findings:
         prompt_lines.append(f"- {f.kpi} ({f.severity}): {f.detail} [latest={f.latest_value}]")
 
-    prompt_lines.append("\nForecast (hero KPI daily_enrollment):")
-    hero_fc = forecast.get("daily_enrollment", {})
+    hero = domain.hero()
+    prompt_lines.append(f"\nForecast (hero KPI {hero}):")
+    hero_fc = forecast.get(hero, {})
     horizons = [h for h in ("h30", "h60", "h90") if h in hero_fc]  # skip the `calibration` meta key
     if horizons:
         for horizon in horizons:
@@ -229,21 +274,31 @@ def analyst_node(state: PipelineState, llm: LLMClient) -> dict:
 
     prompt = "\n".join(prompt_lines)
 
-    # Call LLM analyze
-    analysis = llm.analyze("You are a clinical data quality analyst.", prompt)
+    # Guard the analyst LLM call (symmetric with recommendation_node): the online Claude path can
+    # raise (network/API), and a raise here would crash the whole run with no artifact. Fail closed
+    # to a neutral note; the KPI findings + forecast + governed recommendations still carry the run.
+    # (Offline the stub never raises, so this is a byte-identical no-op for the default path.)
+    try:
+        analysis = llm.analyze(domain.analyst_system, prompt)
+    except Exception:
+        analysis = "Automated interpretation unavailable (the analyst step failed); refer to the KPI findings and forecast."
+    if not isinstance(analysis, str):
+        analysis = ""
 
     return {"analysis": analysis}
 
 
-def recommendation_node(state: PipelineState, llm: LLMClient) -> dict:
+def recommendation_node(state: PipelineState, llm: LLMClient, domain: Domain = PHARMA) -> dict:
     """
-    Generate recommendations for flagged KPIs.
+    Generate recommendations for flagged KPIs, using the domain's framing (not pharma-specific).
 
     Splits flagged findings by severity:
-    - anomaly_kpis (WARNING/CRITICAL) get an LLM-authored CAPA recommendation.
-    - dq_kpis (DATA_QUALITY) get a deterministic data-quality recommendation —
-      a data problem, not a process deviation, so no CAPA on the process.
-    Hero fallback: if both groups are empty, anomaly_kpis = ["daily_enrollment"].
+    - anomaly_kpis (WARNING/CRITICAL) get an LLM-authored recommendation (the online system prompt
+      and offline stub supply the domain's language; the engine's user prompt is domain-neutral).
+    - dq_kpis (DATA_QUALITY) get a deterministic data-quality recommendation from
+      ``domain.dq_recommendation`` — a data problem, not a genuine anomaly.
+    Hero fallback: if both groups are empty, the domain's hero KPI is used (as a data-quality case
+    when the run is DATA_QUALITY, else a routine review).
 
     Every recommendation carries HUMAN_OVERSIGHT_DISCLAIMER and defaults to
     review_status="PENDING_HUMAN_REVIEW". Alert fires on a critical anomaly OR a
@@ -262,21 +317,29 @@ def recommendation_node(state: PipelineState, llm: LLMClient) -> dict:
     # it is a genuinely calm run and the hero gets a routine CAPA-style review rec.
     if not anomaly_kpis and not dq_kpis:
         if overall_severity == "DATA_QUALITY":
-            dq_kpis = ["daily_enrollment"]
+            dq_kpis = [domain.hero()]
         else:
-            anomaly_kpis = ["daily_enrollment"]
+            anomaly_kpis = [domain.hero()]
 
     recommendations = []
 
-    # Anomaly KPIs -> LLM-authored CAPA recommendations
+    # Anomaly KPIs -> LLM-authored recommendations (domain framing comes from recommend_system /
+    # the offline stub; the engine's user prompt is domain-neutral).
     if anomaly_kpis:
-        prompt_lines = ["Generate CAPA recommendations for the following flagged KPIs:"]
+        prompt_lines = ["Generate recommendations for the following flagged KPIs:"]
         for kpi in anomaly_kpis:
             prompt_lines.append(f"- {kpi}")
         prompt = "\n".join(prompt_lines)
 
-        rec_dicts = llm.recommend("You are a quality assurance CAPA expert.", prompt, kpis=anomaly_kpis)
+        # The recommend call runs a Domain-supplied callable (offline_recommend) / a not-runtime-
+        # schema-guaranteed online LLM. A RAISE here must not crash the run (the strict per-item
+        # validation below only runs AFTER a successful return, so it can't catch an exception).
+        try:
+            rec_dicts = llm.recommend(domain.recommend_system, prompt, kpis=anomaly_kpis)
+        except Exception:
+            rec_dicts = []
         requested = set(anomaly_kpis)
+        seen: set[str] = set()
         for rec_dict in rec_dicts if isinstance(rec_dicts, list) else []:
             # Be strict about the LLM's output (the online Claude path is not schema-guaranteed
             # at runtime): the item must be a dict whose kpi is one we REQUESTED and whose text
@@ -297,19 +360,37 @@ def recommendation_node(state: PipelineState, llm: LLMClient) -> dict:
                     review_status="PENDING_HUMAN_REVIEW",
                 )
             )
+            seen.add(kpi)
 
-    # Data-quality KPIs -> deterministic data-quality recommendation (no LLM)
+        # A flagged anomaly KPI MUST carry a governed recommendation. Any that the LLM/stub failed
+        # to produce a VALID one for (raise, malformed, or invented-away) gets a deterministic,
+        # domain-neutral safe fallback — so a WARNING/CRITICAL run can never emit an EMPTY governed
+        # stage (which verify_run would otherwise accept as a valid, semantically-hollow artifact).
+        missing = [k for k in anomaly_kpis if k not in seen]
+        for d in _default_offline_recommend(missing):
+            recommendations.append(
+                Recommendation(
+                    kpi=d["kpi"], text=d["text"], capa_frame=d["capa_frame"],
+                    disclaimer=HUMAN_OVERSIGHT_DISCLAIMER,
+                    review_status="PENDING_HUMAN_REVIEW",
+                )
+            )
+
+    # Data-quality KPIs -> deterministic data-quality recommendation (no LLM). dq_recommendation is
+    # a Domain callable: a raise or a non-string/empty return must not crash or write a blank
+    # governed rec — fall back to the deterministic default text (SAFE is earned, never a fallback).
     for kpi in dq_kpis:
+        try:
+            dq_text = domain.dq_recommendation(kpi)
+        except Exception:
+            dq_text = None
+        if not (isinstance(dq_text, str) and dq_text.strip()):
+            dq_text = _default_dq_recommendation(kpi)
         recommendations.append(
             Recommendation(
                 kpi=kpi,
                 capa_frame="DATA-QUALITY",
-                text=(
-                    f"Data-quality issue on '{kpi}': the detector could not assess this KPI "
-                    "(missing, corrupt, or insufficient data). Investigate the data source and "
-                    "instrumentation before drawing any conclusion; do NOT treat this as a process "
-                    "deviation or open a CAPA on the process."
-                ),
+                text=dq_text,
                 disclaimer=HUMAN_OVERSIGHT_DISCLAIMER,
             )
         )

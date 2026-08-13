@@ -7,34 +7,28 @@ from datetime import datetime
 import pandas as pd
 from langgraph.graph import StateGraph, START, END
 
+from orgpulse.core.domain import Domain
+from orgpulse.domains.pharma import PHARMA
 from orgpulse.pipeline.llm import LLMClient, make_llm
 from orgpulse.pipeline.nodes import detect_node, forecast_node, analyst_node, recommendation_node
 from orgpulse.pipeline.state import Findings, PipelineState, HUMAN_OVERSIGHT_DISCLAIMER
 
 
-def build_graph(llm: LLMClient):
+def build_graph(llm: LLMClient, domain: Domain = PHARMA):
     """
     Construct a StateGraph(PipelineState) with nodes:
     detect → forecast → analyst → recommend
 
-    Analyst and recommend nodes are wrapped in closures to pass llm.
+    All four nodes are wrapped in closures that bind the active `domain` (and `llm` for the two
+    LLM nodes), so the graph runs against any domain configuration.
     Returns the compiled graph.
     """
     graph = StateGraph(PipelineState)
 
-    # Add nodes
-    graph.add_node("detect", detect_node)
-    graph.add_node("forecast", forecast_node)
-
-    # Wrap analyst and recommend to pass llm
-    def analyst_node_with_llm(state: PipelineState) -> dict:
-        return analyst_node(state, llm)
-
-    def recommendation_node_with_llm(state: PipelineState) -> dict:
-        return recommendation_node(state, llm)
-
-    graph.add_node("analyst", analyst_node_with_llm)
-    graph.add_node("recommend", recommendation_node_with_llm)
+    graph.add_node("detect", lambda state: detect_node(state, domain))
+    graph.add_node("forecast", lambda state: forecast_node(state, domain))
+    graph.add_node("analyst", lambda state: analyst_node(state, llm, domain))
+    graph.add_node("recommend", lambda state: recommendation_node(state, llm, domain))
 
     # Add edges
     graph.add_edge(START, "detect")
@@ -47,38 +41,30 @@ def build_graph(llm: LLMClient):
 
 
 def run_pipeline(
-    clinical: pd.DataFrame,
-    qc: pd.DataFrame,
-    supply: pd.DataFrame,
+    streams: dict,
     *,
     offline: bool = True,
     run_id: str | None = None,
     now: str | None = None,
     model: str = "claude-sonnet-5",
+    domain: Domain = PHARMA,
 ) -> Findings:
     """
-    Run the end-to-end offline-deterministic pipeline.
+    Run the end-to-end offline-deterministic pipeline for a domain.
 
-    - Build llm using make_llm(offline, model)
-    - Seed initial state with the three DataFrames
-    - Invoke the compiled graph
-    - Assemble Findings from the final state
-    - generated_at = now if given else datetime.now().isoformat(timespec="seconds")
-    - run_id = arg or a timestamp-derived id
+    ``streams`` is the domain's {stream_name: DataFrame} dict (pharma: clinical/qc/supply). It is
+    carried through the graph under the generic ``streams`` state key so ANY domain's streams
+    traverse it (this is what makes the public API domain-agnostic, matching the tick).
+    - Build llm via make_llm(offline, model, domain); build_graph(llm, domain); invoke; assemble.
     """
-    # Prepare LLM
-    llm = make_llm(offline, model)
+    # Prepare LLM (offline stub is framed by the domain)
+    llm = make_llm(offline, model, domain)
 
     # Build and compile graph
-    compiled_graph = build_graph(llm)
+    compiled_graph = build_graph(llm, domain)
 
-    # Seed initial state
-    initial_state: PipelineState = {
-        "clinical": clinical,
-        "qc": qc,
-        "supply": supply,
-        "offline": offline,
-    }
+    # Seed initial state — the domain's streams under the generic key.
+    initial_state: PipelineState = {"streams": streams, "offline": offline}
 
     # Invoke graph
     final_state = compiled_graph.invoke(initial_state)
@@ -158,11 +144,13 @@ def render_report(findings: Findings) -> str:
         lines.append(findings.analysis)
         lines.append("")
 
-    # Forecast
-    if findings.forecast and "daily_enrollment" in findings.forecast:
-        lines.append("## Forecast (Daily Enrollment)")
+    # Forecast (hero derived from the artifact so the report is domain-agnostic; the label is the
+    # hero name title-cased — "daily_enrollment" -> "Daily Enrollment", so pharma is unchanged).
+    if findings.forecast:
+        hero = next(iter(findings.forecast))
+        lines.append(f"## Forecast ({hero.replace('_', ' ').title()})")
         lines.append("")
-        hero_forecast = findings.forecast["daily_enrollment"]
+        hero_forecast = findings.forecast[hero]
         for horizon in ["h30", "h60", "h90"]:
             if horizon in hero_forecast:
                 data = hero_forecast[horizon]

@@ -63,9 +63,11 @@ class PipelineState(TypedDict, total=False):
     run_id: str
     generated_at: str
     offline: bool
-    clinical: pd.DataFrame
-    qc: pd.DataFrame
-    supply: pd.DataFrame
+    # The domain's generated streams as {stream_name: DataFrame}. A single generic key so the
+    # LangGraph state can carry ANY domain's streams (pharma clinical/qc/supply, banking
+    # loans/reg/trading, …) — LangGraph only preserves declared keys, so undeclared per-domain
+    # stream names would otherwise be dropped.
+    streams: dict
     kpi_findings: list[KpiFinding]
     overall_severity: str
     forecast: dict
