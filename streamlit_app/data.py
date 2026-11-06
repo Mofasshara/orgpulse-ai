@@ -162,6 +162,8 @@ def _findings_schema_reason(fj: dict) -> str | None:
         # structurally ambiguous (the dashboard would render only the first, hiding the rest) —
         # reject rather than partly validate.
         return f"forecast has {len(fc)} top-level keys; exactly one hero is expected"
+    hero_key = None
+    hero_low_trust = False
     if fc:
         # Validate the single hero the dashboard renders (domain-agnostic: pharma
         # "daily_enrollment", banking "npl_ratio", …). A metadata-only or malformed forecast
@@ -200,6 +202,27 @@ def _findings_schema_reason(fj: dict) -> str | None:
             nom = cal.get("nominal")
             if not (_is_num(nom) and 0.0 <= nom <= 1.0):
                 return "forecast calibration nominal is not a finite number in [0,1]"
+        # The dashboard dereferences and FORMATS the lineage block too, when present. Its
+        # absence is not a failure: a domain that makes no genealogy-awareness claim publishes
+        # no lineage key at all, and that is a valid artifact (nothing was claimed).
+        lineage = hero.get("lineage")
+        if lineage is not None:
+            if not isinstance(lineage, dict):
+                return "forecast lineage is not an object"
+            if not (_is_num(lineage.get("confidence")) and 0.0 <= lineage["confidence"] <= 1.0):
+                return "forecast lineage confidence is not a finite number in [0,1]"
+            tc = lineage.get("tier_counts")
+            if not (isinstance(tc, dict) and all(
+                isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in tc.values()
+            )):
+                return "forecast lineage tier_counts is not a dict of non-negative integers"
+            if not (isinstance(lineage.get("reason"), str) and lineage["reason"].strip()):
+                return "forecast lineage reason is not a non-empty string"
+            if not isinstance(lineage.get("low_trust"), bool):
+                return "forecast lineage low_trust is not a boolean"
+            if not (_is_num(lineage.get("widen_factor")) and lineage["widen_factor"] >= 1.0):
+                return "forecast lineage widen_factor is not a finite number >= 1.0"
+            hero_low_trust = lineage["low_trust"]
     recs = fj.get("recommendations", [])
     if not isinstance(recs, list):
         return "recommendations is not a list"
@@ -229,10 +252,20 @@ def _findings_schema_reason(fj: dict) -> str | None:
             else max(kfs_sevs, key=lambda s: _rank.get(s, -1))
         if sev != expected_overall:
             return f"overall_severity {sev!r} disagrees with the KPI findings (expected {expected_overall!r})"
-    # The alert fires exactly when the run is CRITICAL or DATA_QUALITY. `alert` was already
-    # required to be present and boolean above, so this check is unconditional here.
-    if fj["alert"] != (sev in ("CRITICAL", "DATA_QUALITY")):
-        return f"alert {fj['alert']!r} disagrees with overall_severity {sev!r}"
+    # The alert fires when the run is CRITICAL or DATA_QUALITY, OR the hero's lineage is
+    # low-trust (recommendation_node forces alert=True in that case even on an otherwise SAFE
+    # run, so a clean-looking number built on untrustworthy source data is never hidden).
+    # `alert` was already required to be present and boolean above, so this check is
+    # unconditional here.
+    expected_alert = (sev in ("CRITICAL", "DATA_QUALITY")) or hero_low_trust
+    if fj["alert"] != expected_alert:
+        return f"alert {fj['alert']!r} disagrees with overall_severity {sev!r} and lineage low_trust {hero_low_trust!r}"
+    # A low-trust hero forecast must carry its governed LINEAGE-RISK recommendation; alert alone
+    # is not enough (a producer bug could set the flag without ever writing the caveat).
+    if hero_low_trust and not any(
+        r.get("kpi") == hero_key and r.get("capa_frame") == "LINEAGE-RISK" for r in recs
+    ):
+        return "forecast lineage low_trust is True but no LINEAGE-RISK recommendation is present"
     # Every recommendation must reference an ASSESSED KPI — no invented entities in governed output.
     for r in recs:
         if r.get("kpi") not in assessed:

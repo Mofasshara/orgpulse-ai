@@ -327,3 +327,70 @@ def test_load_history_newest_first(tmp_path: Path):
     assert hist[0]["generated_at"] > hist[1]["generated_at"]  # newest first
     assert {"run_id", "overall_severity", "alert", "run_dir"} <= set(hist[0])
     assert data.load_history(tmp_path / "nonexistent") == []
+
+
+from streamlit_app.data import _findings_schema_reason
+
+
+def _base_findings(**overrides):
+    fj = {
+        "run_id": "r", "generated_at": "2026-01-01T00:00:00", "overall_severity": "SAFE",
+        "alert": False,
+        "kpi_findings": [{"kpi": "daily_enrollment", "severity": "SAFE", "detail": "d", "latest_value": 1.0}],
+        "forecast": {}, "analysis": "a", "recommendations": [],
+    }
+    fj.update(overrides)
+    return fj
+
+
+def test_schema_accepts_absent_lineage_block():
+    fj = _base_findings(forecast={"daily_enrollment": {"h30": {"yhat": 1, "lower": 0, "upper": 2},
+                                                         "h60": {"yhat": 1, "lower": 0, "upper": 2},
+                                                         "h90": {"yhat": 1, "lower": 0, "upper": 2}}})
+    assert _findings_schema_reason(fj) is None
+
+
+def test_schema_rejects_confidence_out_of_range():
+    hero = {"h30": {"yhat": 1, "lower": 0, "upper": 2}, "h60": {"yhat": 1, "lower": 0, "upper": 2},
+            "h90": {"yhat": 1, "lower": 0, "upper": 2},
+            "lineage": {"confidence": 1.5, "tier_counts": {}, "reason": "x", "low_trust": False, "widen_factor": 1.0}}
+    fj = _base_findings(forecast={"daily_enrollment": hero})
+    assert _findings_schema_reason(fj) is not None
+
+
+def test_schema_rejects_low_trust_without_alert_or_without_lineage_risk_rec():
+    hero = {"h30": {"yhat": 1, "lower": 0, "upper": 2}, "h60": {"yhat": 1, "lower": 0, "upper": 2},
+            "h90": {"yhat": 1, "lower": 0, "upper": 2},
+            "lineage": {"confidence": 0.1, "tier_counts": {}, "reason": "x", "low_trust": True, "widen_factor": 2.0}}
+    # alert True but no LINEAGE-RISK rec
+    fj = _base_findings(forecast={"daily_enrollment": hero}, alert=True)
+    assert _findings_schema_reason(fj) is not None
+    # has the rec but alert is False
+    fj2 = _base_findings(
+        forecast={"daily_enrollment": hero}, alert=False,
+        recommendations=[{"kpi": "daily_enrollment", "text": "t", "capa_frame": "LINEAGE-RISK",
+                           "review_status": "PENDING_HUMAN_REVIEW", "disclaimer": "d"}],
+    )
+    assert _findings_schema_reason(fj2) is not None
+
+
+def test_schema_accepts_consistent_low_trust_artifact():
+    hero = {"h30": {"yhat": 1, "lower": 0, "upper": 2}, "h60": {"yhat": 1, "lower": 0, "upper": 2},
+            "h90": {"yhat": 1, "lower": 0, "upper": 2},
+            "lineage": {"confidence": 0.1, "tier_counts": {}, "reason": "x", "low_trust": True, "widen_factor": 2.0}}
+    fj = _base_findings(
+        forecast={"daily_enrollment": hero}, alert=True,
+        recommendations=[{"kpi": "daily_enrollment", "text": "t", "capa_frame": "LINEAGE-RISK",
+                           "review_status": "PENDING_HUMAN_REVIEW", "disclaimer": "d"}],
+    )
+    assert _findings_schema_reason(fj) is None
+
+
+def test_verify_run_true_on_a_real_degraded_lineage_tick(tmp_path: Path):
+    from orgpulse.domains.pharma import make_pharma_domain
+    runs = tmp_path / "runs"
+    mem = BaselineMemory(tmp_path / "m.json")
+    degraded = make_pharma_domain(paper_site_ids=frozenset({0, 1, 2}))
+    run_tick(mem, 0, out_root=runs, now="2026-08-04T07:00:00", offline=True, domain=degraded)
+    ok, reason = data.verify_run(runs / "latest")
+    assert ok, reason
