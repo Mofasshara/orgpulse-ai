@@ -130,6 +130,6 @@ mechanically change a forecast's published trust posture, not a validated geneal
 | Data streams | 3 (clinical hero + QC + supply) |
 | Analysis DAG | 4 nodes (LangGraph) |
 | Forecast horizons | 30 / 60 / 90 days, 90% in-sample-calibrated interval |
-| Tests | 314, keyless & offline |
+| Tests | 318, keyless & offline |
 | External adversarial review rounds | 9 (all findings fixed & reproduction-verified; round 5 forced a redesign) |
 | Deployed dashboard deps | 3 (`streamlit`, `pandas`, `plotly`) |

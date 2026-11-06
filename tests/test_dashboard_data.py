@@ -361,7 +361,7 @@ def test_schema_rejects_confidence_out_of_range():
 def test_schema_rejects_low_trust_without_alert_or_without_lineage_risk_rec():
     hero = {"h30": {"yhat": 1, "lower": 0, "upper": 2}, "h60": {"yhat": 1, "lower": 0, "upper": 2},
             "h90": {"yhat": 1, "lower": 0, "upper": 2},
-            "lineage": {"confidence": 0.1, "tier_counts": {}, "reason": "x", "low_trust": True, "widen_factor": 2.0}}
+            "lineage": {"confidence": 0.1, "tier_counts": {}, "reason": "x", "low_trust": True, "widen_factor": 1.9}}
     # alert True but no LINEAGE-RISK rec
     fj = _base_findings(forecast={"daily_enrollment": hero}, alert=True)
     assert _findings_schema_reason(fj) is not None
@@ -377,7 +377,7 @@ def test_schema_rejects_low_trust_without_alert_or_without_lineage_risk_rec():
 def test_schema_accepts_consistent_low_trust_artifact():
     hero = {"h30": {"yhat": 1, "lower": 0, "upper": 2}, "h60": {"yhat": 1, "lower": 0, "upper": 2},
             "h90": {"yhat": 1, "lower": 0, "upper": 2},
-            "lineage": {"confidence": 0.1, "tier_counts": {}, "reason": "x", "low_trust": True, "widen_factor": 2.0}}
+            "lineage": {"confidence": 0.1, "tier_counts": {}, "reason": "x", "low_trust": True, "widen_factor": 1.9}}
     fj = _base_findings(
         forecast={"daily_enrollment": hero}, alert=True,
         recommendations=[{"kpi": "daily_enrollment", "text": "t", "capa_frame": "LINEAGE-RISK",
@@ -394,3 +394,44 @@ def test_verify_run_true_on_a_real_degraded_lineage_tick(tmp_path: Path):
     run_tick(mem, 0, out_root=runs, now="2026-08-04T07:00:00", offline=True, domain=degraded)
     ok, reason = data.verify_run(runs / "latest")
     assert ok, reason
+
+
+def test_schema_rejects_low_trust_false_with_below_threshold_confidence():
+    # The one derived-field contradiction that defeats the whole trust layer: a producer bug
+    # that reports a low confidence score but FALSE low_trust would render as "trusted" in the
+    # dashboard despite the data saying otherwise. Must fail closed, matching the sibling
+    # overall_severity/alert derived-field checks already in this function.
+    hero = {"h30": {"yhat": 1, "lower": 0, "upper": 2}, "h60": {"yhat": 1, "lower": 0, "upper": 2},
+            "h90": {"yhat": 1, "lower": 0, "upper": 2},
+            "lineage": {"confidence": 0.1, "tier_counts": {}, "reason": "x", "low_trust": False, "widen_factor": 1.0}}
+    fj = _base_findings(forecast={"daily_enrollment": hero})
+    assert _findings_schema_reason(fj) is not None
+
+
+def test_schema_rejects_low_trust_true_with_above_threshold_confidence():
+    hero = {"h30": {"yhat": 1, "lower": 0, "upper": 2}, "h60": {"yhat": 1, "lower": 0, "upper": 2},
+            "h90": {"yhat": 1, "lower": 0, "upper": 2},
+            "lineage": {"confidence": 0.95, "tier_counts": {}, "reason": "x", "low_trust": True, "widen_factor": 1.0}}
+    fj = _base_findings(
+        forecast={"daily_enrollment": hero}, alert=True,
+        recommendations=[{"kpi": "daily_enrollment", "text": "t", "capa_frame": "LINEAGE-RISK",
+                           "review_status": "PENDING_HUMAN_REVIEW", "disclaimer": "d"}],
+    )
+    assert _findings_schema_reason(fj) is not None
+
+
+def test_schema_rejects_widen_factor_inconsistent_with_confidence():
+    hero = {"h30": {"yhat": 1, "lower": 0, "upper": 2}, "h60": {"yhat": 1, "lower": 0, "upper": 2},
+            "h90": {"yhat": 1, "lower": 0, "upper": 2},
+            "lineage": {"confidence": 1.0, "tier_counts": {}, "reason": "x", "low_trust": False, "widen_factor": 1.6}}
+    fj = _base_findings(forecast={"daily_enrollment": hero})
+    assert _findings_schema_reason(fj) is not None
+
+
+def test_dashboard_lineage_threshold_constants_match_orgpulse_lineage():
+    # Anti-drift guard (same pattern as verify_audit vs orgpulse.governance.audit): the dashboard
+    # duplicates these constants rather than importing orgpulse.lineage (split-plane: the
+    # presentation layer imports no orgpulse package code), so prove they agree.
+    from orgpulse.lineage import LOW_TRUST_THRESHOLD, MAX_EXTRA_WIDEN
+    assert data._LOW_TRUST_THRESHOLD == LOW_TRUST_THRESHOLD
+    assert data._MAX_EXTRA_WIDEN == MAX_EXTRA_WIDEN

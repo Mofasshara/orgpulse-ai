@@ -19,6 +19,11 @@ from pathlib import Path
 
 _GENESIS = "0" * 64
 _SEVERITIES = {"SAFE", "WARNING", "CRITICAL", "DATA_QUALITY"}
+# Duplicated from orgpulse.lineage rather than imported: the presentation plane imports no
+# orgpulse package code (split-plane). tests/test_dashboard_data.py proves these agree
+# (anti-drift guard, same pattern as verify_audit vs orgpulse.governance.audit).
+_LOW_TRUST_THRESHOLD = 0.8
+_MAX_EXTRA_WIDEN = 1.0
 
 
 def _sha256(text: str) -> str:
@@ -222,6 +227,24 @@ def _findings_schema_reason(fj: dict) -> str | None:
                 return "forecast lineage low_trust is not a boolean"
             if not (_is_num(lineage.get("widen_factor")) and lineage["widen_factor"] >= 1.0):
                 return "forecast lineage widen_factor is not a finite number >= 1.0"
+            # Derived-field consistency: low_trust and widen_factor are both FUNCTIONS of
+            # confidence, not independent inputs. A hash-consistent artifact that reports a low
+            # confidence but low_trust=False (or vice versa) would render as falsely "trusted" by
+            # the dashboard (app.py reads low_trust, not confidence, to decide what to show) —
+            # exactly the failure this layer exists to prevent. Reject the contradiction, the same
+            # way overall_severity-vs-kpi_findings and alert-vs-severity are rejected below.
+            expected_low_trust = lineage["confidence"] < _LOW_TRUST_THRESHOLD
+            if lineage["low_trust"] != expected_low_trust:
+                return (
+                    f"forecast lineage low_trust {lineage['low_trust']!r} disagrees with "
+                    f"confidence {lineage['confidence']!r} (expected {expected_low_trust!r})"
+                )
+            expected_widen = 1.0 + _MAX_EXTRA_WIDEN * (1.0 - lineage["confidence"])
+            if abs(lineage["widen_factor"] - expected_widen) > 1e-9:
+                return (
+                    f"forecast lineage widen_factor {lineage['widen_factor']!r} is inconsistent "
+                    f"with confidence {lineage['confidence']!r} (expected {expected_widen!r})"
+                )
             hero_low_trust = lineage["low_trust"]
     recs = fj.get("recommendations", [])
     if not isinstance(recs, list):
