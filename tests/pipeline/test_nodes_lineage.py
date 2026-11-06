@@ -1,7 +1,9 @@
 from datetime import date
 
 from orgpulse.domains.pharma import PHARMA, make_pharma_domain
-from orgpulse.pipeline.nodes import detect_node, forecast_node
+from orgpulse.pipeline.llm import make_llm
+from orgpulse.pipeline.nodes import detect_node, forecast_node, recommendation_node
+from orgpulse.pipeline.state import KpiFinding
 
 
 def _streams(domain, days=260, seed=42):
@@ -74,3 +76,36 @@ def test_forecast_node_falls_back_to_unsafe_lineage_when_tiers_are_unrecognized(
     lineage = out["forecast"]["daily_enrollment"]["lineage"]
     assert lineage["confidence"] == 0.0
     assert lineage["low_trust"] is True
+
+
+def _calm_state_with_lineage(low_trust: bool):
+    return {
+        "kpi_findings": [KpiFinding(kpi="daily_enrollment", severity="SAFE", detail="d", latest_value=1.0)],
+        "overall_severity": "SAFE",
+        "forecast": {"daily_enrollment": {"lineage": {"low_trust": low_trust, "confidence": 0.3 if low_trust else 1.0}}},
+    }
+
+
+def test_low_trust_hero_forces_alert_and_adds_lineage_risk_recommendation():
+    llm = make_llm(offline=True, domain=PHARMA)
+    out = recommendation_node(_calm_state_with_lineage(True), llm, PHARMA)
+    assert out["alert"] is True
+    matches = [r for r in out["recommendations"] if r.capa_frame == "LINEAGE-RISK" and r.kpi == "daily_enrollment"]
+    assert len(matches) == 1 and matches[0].text.strip()
+
+
+def test_high_trust_hero_does_not_add_lineage_risk_recommendation():
+    llm = make_llm(offline=True, domain=PHARMA)
+    out = recommendation_node(_calm_state_with_lineage(False), llm, PHARMA)
+    assert out["alert"] is False
+    assert not any(r.capa_frame == "LINEAGE-RISK" for r in out["recommendations"])
+
+
+def test_lineage_risk_recommendation_coexists_with_an_anomaly_recommendation():
+    llm = make_llm(offline=True, domain=PHARMA)
+    state = _calm_state_with_lineage(True)
+    state["kpi_findings"] = [KpiFinding(kpi="daily_enrollment", severity="WARNING", detail="d", latest_value=1.0)]
+    state["overall_severity"] = "WARNING"
+    out = recommendation_node(state, llm, PHARMA)
+    kinds = [r.capa_frame for r in out["recommendations"] if r.kpi == "daily_enrollment"]
+    assert "LINEAGE-RISK" in kinds and len(kinds) == 2   # both the anomaly rec and the lineage rec

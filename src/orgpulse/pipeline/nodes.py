@@ -11,6 +11,7 @@ from orgpulse.core.domain import (
     Domain,
     KpiSpec,
     _default_dq_recommendation,
+    _default_lineage_caveat,
     _default_offline_recommend,
 )
 from orgpulse.detect.orchestrator import detect_kpi, overall_severity
@@ -420,7 +421,32 @@ def recommendation_node(state: PipelineState, llm: LLMClient, domain: Domain = P
             )
         )
 
-    # Alert fires on a critical anomaly OR a systemic data failure
-    alert = overall_severity in ("CRITICAL", "DATA_QUALITY")
+    # Lineage downgrade: independent of the anomaly/data-quality split above, so it fires
+    # regardless of whether the hero is also flagged for a statistical anomaly, a data-quality
+    # problem, or neither. A low-trust hero forecast must never look clean just because the
+    # statistical severity happened to be SAFE.
+    hero = domain.hero()
+    hero_low_trust = bool(
+        state.get("forecast", {}).get(hero, {}).get("lineage", {}).get("low_trust", False)
+    )
+    if hero_low_trust:
+        try:
+            caveat = domain.lineage_caveat(hero)
+        except Exception:
+            caveat = None
+        if not (isinstance(caveat, str) and caveat.strip()):
+            caveat = _default_lineage_caveat(hero)
+        recommendations.append(
+            Recommendation(
+                kpi=hero,
+                text=caveat,
+                capa_frame="LINEAGE-RISK",
+                disclaimer=HUMAN_OVERSIGHT_DISCLAIMER,
+                review_status="PENDING_HUMAN_REVIEW",
+            )
+        )
+
+    # Alert fires on a critical anomaly, a systemic data failure, or low-trust hero lineage
+    alert = overall_severity in ("CRITICAL", "DATA_QUALITY") or hero_low_trust
 
     return {"recommendations": recommendations, "alert": alert}
