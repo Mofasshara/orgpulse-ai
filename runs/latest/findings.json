@@ -1,32 +1,32 @@
 {
-  "run_id": "tick-5-2026-08-03T07:00:00",
-  "generated_at": "2026-08-03T07:00:00",
+  "run_id": "tick-6-2026-09-01T07:00:00",
+  "generated_at": "2026-09-01T07:00:00",
   "overall_severity": "CRITICAL",
   "alert": true,
   "kpi_findings": [
     {
       "kpi": "daily_enrollment",
       "severity": "CRITICAL",
-      "detail": "low CUSUM peak=21.76 (warn=5.12, crit=7.96, n=30); first cross idx 5",
-      "latest_value": 50.0
+      "detail": "low CUSUM peak=23.20 (warn=5.12, crit=7.96, n=30); first cross idx 7",
+      "latest_value": 59.0
     },
     {
       "kpi": "pass_rate",
-      "severity": "SAFE",
-      "detail": "z=-0.26 (warn>=3.0, crit>=4.5)",
-      "latest_value": 0.9285714285714286
+      "severity": "WARNING",
+      "detail": "low CUSUM peak=5.65 (warn=5.12, crit=7.96, n=30); first cross idx 6",
+      "latest_value": 0.8333333333333334
     },
     {
       "kpi": "calibration_offset",
       "severity": "CRITICAL",
-      "detail": "high CUSUM peak=47.25 (warn=5.12, crit=7.96, n=30); first cross idx 4",
-      "latest_value": 1.4342095627135805
+      "detail": "high CUSUM peak=51.81 (warn=5.12, crit=7.96, n=30); first cross idx 3",
+      "latest_value": 1.5666132067140943
     },
     {
       "kpi": "lead_time_days",
       "severity": "SAFE",
-      "detail": "z=-0.50 (warn>=3.0, crit>=4.5)",
-      "latest_value": 4.559527803117606
+      "detail": "z=0.26 (warn>=3.0, crit>=4.5)",
+      "latest_value": 5.905073566969942
     }
   ],
   "forecast": {
@@ -34,25 +34,36 @@
       "calibration": {
         "applied": true,
         "in_sample": true,
-        "scale_factor": 1.754831154776734,
-        "raw_coverage": 0.6583333333333333,
+        "scale_factor": 1.7743059661351885,
+        "raw_coverage": 0.75,
         "nominal": 0.9,
         "note": "interval widened by an in-sample calibration factor; out-of-sample coverage not validated"
       },
+      "lineage": {
+        "confidence": 0.4,
+        "tier_counts": {
+          "system_of_record": 1900,
+          "manual_scanned": 1140,
+          "missing": 0
+        },
+        "reason": "38% of contributing records are not from a verified system of record (confidence=0.40)",
+        "low_trust": true,
+        "widen_factor": 1.6
+      },
       "h30": {
-        "yhat": 44.0457505846532,
-        "lower": 23.944522784495966,
-        "upper": 63.59396239155913
+        "yhat": 45.80763482376548,
+        "lower": 8.800817252638552,
+        "upper": 81.47621375868509
       },
       "h60": {
-        "yhat": 43.55085932204261,
-        "lower": 22.82832617755352,
-        "upper": 63.19364167636914
+        "yhat": 45.26331997882907,
+        "lower": 8.302841617194183,
+        "upper": 85.6275373558986
       },
       "h90": {
-        "yhat": 44.05486098536907,
-        "lower": 24.869168074221957,
-        "upper": 64.23068285374154
+        "yhat": 44.54807977354475,
+        "lower": 4.672662888568254,
+        "upper": 82.85941217856767
       }
     }
   },
@@ -66,9 +77,23 @@
       "review_status": "PENDING_HUMAN_REVIEW"
     },
     {
+      "kpi": "pass_rate",
+      "text": "Open a CAPA review for 'pass_rate': confirm the signal against source data, assess whether an ICH E6(R3) deviation threshold is crossed, and, if confirmed, document root cause and corrective action. Escalate to the responsible quality owner for sign-off.",
+      "capa_frame": "CAPA-002",
+      "disclaimer": "Decision support only \u2014 not an automated decision. A qualified human must review and approve before any action (EU AI Act Art. 14 human oversight).",
+      "review_status": "PENDING_HUMAN_REVIEW"
+    },
+    {
       "kpi": "calibration_offset",
       "text": "Open a CAPA review for 'calibration_offset': confirm the signal against source data, assess whether an ICH E6(R3) deviation threshold is crossed, and, if confirmed, document root cause and corrective action. Escalate to the responsible quality owner for sign-off.",
-      "capa_frame": "CAPA-002",
+      "capa_frame": "CAPA-003",
+      "disclaimer": "Decision support only \u2014 not an automated decision. A qualified human must review and approve before any action (EU AI Act Art. 14 human oversight).",
+      "review_status": "PENDING_HUMAN_REVIEW"
+    },
+    {
+      "kpi": "daily_enrollment",
+      "text": "The clinical records behind 'daily_enrollment' include site(s) whose data did not come from a verified system of record (scanned/manual case report forms rather than EDC entry). Treat this forecast as lower-trust: do not act on it without confirming the underlying site data with the responsible quality owner, and note the widened interval already published reflects this genealogy risk, not just statistical uncertainty.",
+      "capa_frame": "LINEAGE-RISK",
       "disclaimer": "Decision support only \u2014 not an automated decision. A qualified human must review and approve before any action (EU AI Act Art. 14 human oversight).",
       "review_status": "PENDING_HUMAN_REVIEW"
     }

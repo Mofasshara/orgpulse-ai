@@ -39,6 +39,17 @@
         "nominal": 0.9,
         "note": "interval widened by an in-sample calibration factor; out-of-sample coverage not validated"
       },
+      "lineage": {
+        "confidence": 1.0,
+        "tier_counts": {
+          "system_of_record": 2560,
+          "manual_scanned": 0,
+          "missing": 0
+        },
+        "reason": "0% of contributing records are not from a verified system of record (confidence=1.00)",
+        "low_trust": false,
+        "widen_factor": 1.0
+      },
       "h30": {
         "yhat": 51.74379609972096,
         "lower": 33.66945138282166,

@@ -15,17 +15,22 @@ from pathlib import Path
 
 from orgpulse.agent.baseline_memory import BaselineMemory
 from orgpulse.agent.tick import run_tick
+from orgpulse.domains.pharma import make_pharma_domain
 from orgpulse.governance.audit import HashChainedAuditLog
 
 REPO = Path(__file__).resolve().parents[1]
 RUNS = REPO / "runs"
 MEMORY = REPO / "baseline_memory.json"
 
-# One tick per month, fixed dates → reproducible timestamps in the committed tree.
+# One tick per month, fixed dates → reproducible timestamps in the committed tree. The last
+# tick is the genealogy-trust-layer demo scenario: sites 0-2 tagged manual_scanned lineage
+# (degraded), every earlier tick is all system_of_record (clean) via make_pharma_domain below.
 _DATES = [
     "2026-03-02T07:00:00", "2026-04-01T07:00:00", "2026-05-01T07:00:00",
     "2026-06-01T07:00:00", "2026-07-01T07:00:00", "2026-08-03T07:00:00",
+    "2026-09-01T07:00:00",
 ]
+_DEGRADED_LINEAGE_TICK = len(_DATES) - 1
 
 
 def _seed_dir_names(n: int) -> list[str]:
@@ -63,7 +68,9 @@ def main() -> None:
 
     mem = BaselineMemory(MEMORY)
     for tick, now in enumerate(_DATES[:n]):
-        findings = run_tick(mem, tick, out_root=RUNS, now=now, offline=True)
+        paper = frozenset({0, 1, 2}) if tick == _DEGRADED_LINEAGE_TICK else frozenset()
+        domain = make_pharma_domain(paper_site_ids=paper)
+        findings = run_tick(mem, tick, out_root=RUNS, now=now, offline=True, domain=domain)
         assert HashChainedAuditLog(RUNS / "latest" / "audit.jsonl").verify(), f"tick {tick} audit broken"
         print(f"tick {tick} @ {now[:10]}: {findings.overall_severity:<12} alert={findings.alert}")
 
