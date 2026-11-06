@@ -57,6 +57,15 @@ def _default_dq_recommendation(kpi: str) -> str:
     )
 
 
+def _default_lineage_caveat(kpi: str) -> str:
+    """Domain-neutral text for a low-trust lineage finding. Each domain overrides with its own language."""
+    return (
+        f"The source records behind '{kpi}' could not be fully verified against a trusted system "
+        "of record. Review this recommendation with that in mind: a wider-than-usual forecast "
+        "interval has already been published to reflect this uncertainty."
+    )
+
+
 @dataclass(frozen=True)
 class Domain:
     """A complete, self-consistent domain configuration for the engine."""
@@ -74,6 +83,12 @@ class Domain:
     # (streams) -> DataFrame(ds, y) for the hero KPI — Prophet needs the dated frame, not just the
     # value array `extract` returns. Optional; if absent, no forecast is published.
     hero_frame: Callable[[dict], object] | None = None
+    # (streams) -> (dates, source_tiers) aligned per contributing record, for the hero's lineage
+    # confidence. Optional: None means this domain makes no genealogy-awareness claim at all, so
+    # no lineage block is published (not an unsafe state, since nothing was claimed). A domain
+    # that DOES implement this and then fails to deliver usable data at run time falls back to
+    # the unsafe low-confidence default (see orgpulse.lineage.lineage_confidence).
+    lineage_extract: Callable[[dict], tuple] | None = None
     # OFFLINE (keyless) framing: the deterministic stub can't be prompted, so the domain supplies
     # its own language. `offline_framing` completes the analyst sentence; `offline_recommend`
     # builds the recommendation dicts. Defaults are domain-neutral; each domain overrides them.
@@ -82,6 +97,7 @@ class Domain:
     )
     offline_recommend: Callable[[list], list] = _default_offline_recommend
     dq_recommendation: Callable[[str], str] = _default_dq_recommendation  # (kpi) -> data-quality rec text
+    lineage_caveat: Callable[[str], str] = _default_lineage_caveat  # (kpi) -> low-trust-lineage rec text
 
     def __post_init__(self) -> None:
         # A Domain is a self-consistent VALUE: a malformed one must fail at CONSTRUCTION, never
@@ -171,11 +187,13 @@ class Domain:
                 if day_vals["critical_days"] >= day_vals["warn_days"]:
                     raise ValueError(f"KPI {k.name!r}: DATEMATH critical_days ({day_vals['critical_days']:g}) "
                                      f"must be < warn_days ({day_vals['warn_days']:g}) so WARNING is reachable")
-        for cb in ("generate", "extract", "offline_recommend", "dq_recommendation"):
+        for cb in ("generate", "extract", "offline_recommend", "dq_recommendation", "lineage_caveat"):
             if not callable(getattr(self, cb)):
                 raise ValueError(f"domain {self.name!r}: {cb} must be callable, got {getattr(self, cb)!r}")
         if self.hero_frame is not None and not callable(self.hero_frame):
             raise ValueError(f"domain {self.name!r}: hero_frame must be callable or None")
+        if self.lineage_extract is not None and not callable(self.lineage_extract):
+            raise ValueError(f"domain {self.name!r}: lineage_extract must be callable or None")
         # The framing fields are consumed as strings (online LLM system prompts; the offline stub's
         # sentence). A non-string would crash the online analyst/recommend call — reject at construction.
         for sfield in ("analyst_system", "recommend_system", "offline_framing"):

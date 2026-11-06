@@ -139,3 +139,27 @@ def test_rejects_non_string_framing_fields(field, bad):
     kwargs[field] = bad
     with pytest.raises(ValueError):
         Domain(**kwargs)
+
+
+def test_lineage_extract_defaults_to_none_and_lineage_caveat_has_a_default():
+    d = _domain([KpiSpec("x", is_hero=True)])
+    assert d.lineage_extract is None
+    assert isinstance(d.lineage_caveat("x"), str) and d.lineage_caveat("x").strip()
+
+
+def test_lineage_extract_must_be_callable_or_none():
+    with pytest.raises(ValueError):
+        Domain(
+            name="t", generate=lambda **k: {}, extract=lambda s, n: None,
+            kpi_specs=(KpiSpec("x", is_hero=True),), analyst_system="a", recommend_system="r",
+            lineage_extract="not callable",
+        )
+
+
+def test_lineage_caveat_must_be_callable():
+    with pytest.raises(ValueError):
+        Domain(
+            name="t", generate=lambda **k: {}, extract=lambda s, n: None,
+            kpi_specs=(KpiSpec("x", is_hero=True),), analyst_system="a", recommend_system="r",
+            lineage_caveat="not callable",
+        )
