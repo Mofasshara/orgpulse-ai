@@ -20,6 +20,7 @@ from orgpulse.detect.validation import MIN_ASSESSMENT_DAYS, kpi_domain_reason, k
 from orgpulse.domains.pharma import PHARMA
 from orgpulse.forecast.calibration import interval_calibration
 from orgpulse.forecast.prophet_forecaster import forecast_kpi, series_from_generator
+from orgpulse.lineage import UNSAFE_LINEAGE, lineage_confidence
 from orgpulse.pipeline.llm import LLMClient
 from orgpulse.pipeline.state import (
     HUMAN_OVERSIGHT_DISCLAIMER,
@@ -222,14 +223,38 @@ def forecast_node(state: PipelineState, domain: Domain = PHARMA) -> ForecastNode
                 "note": "history too short to calibrate; raw Prophet interval published",
             }
 
+        # Lineage confidence: a SEPARATE widening reason from the statistical calibration above,
+        # composed on top of it, never conflated into one number. None means the domain makes no
+        # genealogy-awareness claim at all, so no lineage key is published. A domain that DOES
+        # implement lineage_extract and then fails to deliver usable data (raises, or hands back
+        # data lineage_confidence can't parse) falls back to UNSAFE_LINEAGE, never a silent pass.
+        combined_scale = scale
+        lineage_meta = None
+        if domain.lineage_extract is not None:
+            try:
+                raw_dates, raw_tiers = domain.lineage_extract(streams)
+                lineage_result = lineage_confidence(raw_dates, raw_tiers)
+            except Exception:
+                lineage_result = UNSAFE_LINEAGE
+            lineage_meta = {
+                "confidence": lineage_result.confidence,
+                "tier_counts": lineage_result.tier_counts,
+                "reason": lineage_result.reason,
+                "low_trust": lineage_result.low_trust,
+                "widen_factor": lineage_result.widen_factor,
+            }
+            combined_scale = scale * lineage_result.widen_factor
+
         forecast_result[hero] = {"calibration": cal_meta}
+        if lineage_meta is not None:
+            forecast_result[hero]["lineage"] = lineage_meta
         for h in (30, 60, 90):
             fc_at_h = fc.at_horizon(h)
             yhat = float(fc_at_h["yhat"])
             lower_raw = float(fc_at_h["yhat_lower"])
             upper_raw = float(fc_at_h["yhat_upper"])
-            lower = yhat - scale * (yhat - lower_raw)  # widen by the calibration scale
-            upper = yhat + scale * (upper_raw - yhat)
+            lower = yhat - combined_scale * (yhat - lower_raw)  # statistical + lineage widening
+            upper = yhat + combined_scale * (upper_raw - yhat)
             if not (math.isfinite(yhat) and math.isfinite(lower) and math.isfinite(upper)):
                 # An extreme hero value (e.g. a finite value at the float64 boundary) can push
                 # Prophet's trend/uncertainty arithmetic, or the calibration scaling above, past
