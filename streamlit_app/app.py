@@ -183,6 +183,21 @@ with left:
             cal_txt + " Backtest is honest: the model does **not** beat a naïve baseline "
             "(MASE ≈ 1.4) — the value is the calibrated interval + the audit trail, not point accuracy."
         )
+        lineage = fc.get("lineage")
+        if lineage is not None:
+            conf = lineage.get("confidence")
+            if lineage.get("low_trust"):
+                lineage_txt = (
+                    f"🧬 **Lineage confidence: {conf:.0%}**: {lineage.get('reason', '')}. "
+                    f"The interval above is ADDITIONALLY widened ×{lineage.get('widen_factor', 1):.2f} "
+                    "for this data-provenance risk, on top of the statistical calibration."
+                )
+            else:
+                lineage_txt = (
+                    f"🧬 **Lineage confidence: {conf:.0%}**: {lineage.get('reason', '')}. "
+                    "No additional widening was needed; the source records are trusted."
+                )
+            st.caption(lineage_txt)
     else:
         st.info("No forecast in this run.")
 
