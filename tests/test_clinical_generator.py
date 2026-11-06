@@ -16,10 +16,47 @@ def test_schema_and_types():
     df = _df()
     assert list(df.columns) == [
         "date", "site_id", "daily_enrollment", "cumulative_enrollment",
-        "screen_fail_rate", "dropout_rate",
+        "screen_fail_rate", "dropout_rate", "source_tier",
     ]
     assert pd.api.types.is_datetime64_any_dtype(df["date"])
     assert df["site_id"].nunique() == 8
+
+
+def test_source_tier_defaults_to_system_of_record_for_all_sites():
+    df = _df()
+    assert (df["source_tier"] == "system_of_record").all()
+
+
+def test_paper_and_missing_site_ids_tag_correctly():
+    df = generate_clinical(
+        date(2026, 1, 1), 60, make_rng(42), n_sites=8,
+        paper_site_ids=frozenset({0}), missing_source_site_ids=frozenset({1}),
+    )
+    assert (df.loc[df.site_id == 0, "source_tier"] == "manual_scanned").all()
+    assert (df.loc[df.site_id == 1, "source_tier"] == "missing").all()
+    assert (df.loc[~df.site_id.isin([0, 1]), "source_tier"] == "system_of_record").all()
+
+
+@pytest.mark.parametrize("paper,missing", [
+    (frozenset({8}), frozenset()),          # out of range (n_sites=8, valid ids 0..7)
+    (frozenset({-1}), frozenset()),         # negative
+    (frozenset({0}), frozenset({0})),       # overlap
+])
+def test_rejects_bad_site_tier_config(paper, missing):
+    with pytest.raises(ValueError):
+        generate_clinical(date(2026, 1, 1), 30, make_rng(0), n_sites=8,
+                           paper_site_ids=paper, missing_source_site_ids=missing)
+
+
+def test_source_tier_config_does_not_change_any_numeric_column():
+    plain = _df(seed=7)
+    tagged = generate_clinical(
+        date(2026, 1, 1), 200, make_rng(7), n_sites=8,
+        paper_site_ids=frozenset({2}), missing_source_site_ids=frozenset({5}),
+    )
+    numeric_cols = ["date", "site_id", "daily_enrollment", "cumulative_enrollment",
+                    "screen_fail_rate", "dropout_rate"]
+    pd.testing.assert_frame_equal(plain[numeric_cols], tagged[numeric_cols])
 
 
 def test_cumulative_enrollment_non_decreasing_per_site():
