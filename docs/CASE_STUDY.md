@@ -85,6 +85,34 @@ that the agent's remembered baseline was being fit on a 30-sample window, below 
 the root (decouple the baseline window from the detection window), locked with a regression test
 — not a patch over the symptom.
 
+## Genealogy-aware forecast trust: honest about what it proves
+
+A later phase added a data-lineage-derived confidence signal to the hero forecast. Each clinical
+record is tagged with where it actually came from (a verified system of record, a scanned/manual
+record, or missing provenance); a single confidence score is computed from that tagging and
+mechanically widens the published interval on top of the existing statistical calibration, and
+downgrades the governed recommendation (forcing a `PENDING_HUMAN_REVIEW` alert and a distinct
+`LINEAGE-RISK` recommendation) when trust is low, even on an otherwise statistically calm run. A
+seeded clean/degraded scenario pair demonstrates both directions: an all-system-of-record run
+publishes full confidence and no additional widening, and a run with several sites tagged
+scanned/manual publishes a visibly wider interval and an alert. (The committed degraded demo
+tick also happens to be statistically CRITICAL from the pre-existing protocol-amendment story,
+so its alert is not attributable to lineage alone in that specific artifact; the test suite and
+a direct manual run both confirm low lineage trust forces the alert and the `LINEAGE-RISK`
+recommendation on an otherwise statistically SAFE run.)
+
+**What this proves:** the mechanism is real and mechanical, not cosmetic. Lineage confidence is
+computed from the raw contributing records (not the aggregated series), defaults to the unsafe
+(lowest-confidence) state on missing or corrupt lineage data, and is wired through a single
+chokepoint (`forecast_node`/`recommendation_node`) rather than re-implemented per consumer.
+
+**What this does not prove:** the tier weights (`1.0` / `0.4` / `0.0`) and the widen-factor
+formula are illustrative choices for this demonstration, not empirically validated against real
+clinical operations or any production risk model. The mechanism covers the hero KPI
+(`daily_enrollment`) and the clinical stream only in this phase; extending it to the QC/supply
+streams or to other domains is deferred. This is a demonstration that a lineage signal *can*
+mechanically change a forecast's published trust posture, not a validated genealogy risk score.
+
 ## What it demonstrates
 
 - **Agentic autonomy** with genuine cross-run memory and self-scheduling.
@@ -102,6 +130,6 @@ the root (decouple the baseline window from the detection window), locked with a
 | Data streams | 3 (clinical hero + QC + supply) |
 | Analysis DAG | 4 nodes (LangGraph) |
 | Forecast horizons | 30 / 60 / 90 days, 90% in-sample-calibrated interval |
-| Tests | 162, keyless & offline |
+| Tests | 314, keyless & offline |
 | External adversarial review rounds | 9 (all findings fixed & reproduction-verified; round 5 forced a redesign) |
 | Deployed dashboard deps | 3 (`streamlit`, `pandas`, `plotly`) |

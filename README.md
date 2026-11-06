@@ -60,7 +60,11 @@ generate 3 streams ─▶ detect ─▶ forecast ─▶ analyst (LLM) ─▶ rec
   univariate path — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#detector-status).)
 - **Forecast** — deterministic Prophet on the hero KPI (clinical enrollment): 30/60/90-day
   forecast with an **in-sample-calibrated** 90% interval (the calibration factor is applied to
-  the published bounds), backtested honestly (see results below).
+  the published bounds), backtested honestly (see results below). A data-lineage confidence
+  signal (sourced from per-record provenance tags) additionally widens the published interval
+  and downgrades the governed recommendation when the underlying records aren't fully verified
+  against a trusted system of record, a demonstration of the mechanism, not a validated risk
+  score (see [docs/CASE_STUDY.md](docs/CASE_STUDY.md)).
 - **Reason** — an LLM turns the numbers into a GxP-framed interpretation and a CAPA
   recommendation, or, for data-quality findings, a "fix the data, don't open a CAPA" note.
 - **Govern** — every recommendation is `PENDING_HUMAN_REVIEW` with an Art. 14 disclaimer and
@@ -117,7 +121,7 @@ Anthropic Claude (reasoning, optional) · Hermes (autonomy/scheduling) · Stream
 ## Tests
 
 ```bash
-uv run pytest -q      # 162 passing
+uv run pytest -q      # 314 passing
 ```
 
 Keyless and offline: no test needs `ANTHROPIC_API_KEY` or network access. The suite was

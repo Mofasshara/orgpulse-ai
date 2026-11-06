@@ -71,7 +71,10 @@ alive**: the dashboard has no model to run and no key to hold — it renders com
 2. **forecast** — deterministic Prophet on the hero KPI (`daily_enrollment`): 30/60/90-day
    point forecast with an **in-sample-calibrated** 90% interval (the calibration factor is
    applied to the published bounds, not just diagnosed). Backtested honestly (it does *not*
-   beat naïve; out-of-sample interval coverage is not claimed).
+   beat naïve; out-of-sample interval coverage is not claimed). When the domain implements
+   `lineage_extract`, the forecast also publishes a data-lineage **confidence** score, computed
+   from the hero's contributing records and applied as a second, separately-reported widening
+   factor on top of the statistical calibration (see [CASE_STUDY](CASE_STUDY.md#genealogy-aware-forecast-trust-honest-about-what-it-proves)).
 3. **analyst** — an LLM turns the numbers into a GxP-framed interpretation. Offline
    deterministic stub by default (keyless); Claude Sonnet when `ANTHROPIC_API_KEY` is set
    **and** `--online` is passed (the CLI defaults to `--offline`).
@@ -126,8 +129,10 @@ regulated domain and another lives behind a single `Domain` value (`orgpulse/cor
 | `extract(streams, kpi)` → 1-D series | per-KPI extraction (validated raw rows before aggregation) |
 | `kpi_specs` — `KpiSpec(name, domain_bounds, detection_mode, is_hero, thresholds)` | 4 KPIs, all `TIMESERIES`, hero = `daily_enrollment` |
 | `hero_frame(streams)` → dated frame | the daily enrollment series for Prophet |
+| `lineage_extract(streams)` → (dates, source tiers) *(optional)* | per-clinical-record provenance tagging (`None` if a domain makes no genealogy-awareness claim) |
 | `analyst_system` / `recommend_system` | online (Claude) GxP / ICH-E6(R3) framing |
 | `offline_framing` / `offline_recommend` | keyless-stub GxP / CAPA language |
+| `lineage_caveat(kpi)` → str | low-lineage-trust recommendation text (GxP-framed) |
 | `compliance` | EU AI Act context |
 
 **This is a code interface, not a "swap a YAML file" platform** — generators and extractors are
