@@ -27,6 +27,7 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from streamlit_app import data
+from streamlit_app.lineage_caption import lineage_caption
 
 # --- severity palette (works in light and dark) ---
 SEV = {
@@ -185,19 +186,7 @@ with left:
         )
         lineage = fc.get("lineage")
         if lineage is not None:
-            conf = lineage.get("confidence")
-            if lineage.get("low_trust"):
-                lineage_txt = (
-                    f"🧬 **Lineage confidence: {conf:.0%}**: {lineage.get('reason', '')}. "
-                    f"The interval above is ADDITIONALLY widened ×{lineage.get('widen_factor', 1):.2f} "
-                    "for this data-provenance risk, on top of the statistical calibration."
-                )
-            else:
-                lineage_txt = (
-                    f"🧬 **Lineage confidence: {conf:.0%}**: {lineage.get('reason', '')}. "
-                    "No additional widening was needed; the source records are trusted."
-                )
-            st.caption(lineage_txt)
+            st.caption(lineage_caption(lineage))
     else:
         st.info("No forecast in this run.")
 
