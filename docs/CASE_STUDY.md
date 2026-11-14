@@ -104,7 +104,11 @@ recommendation on an otherwise statistically SAFE run.)
 **What this proves:** the mechanism is real and mechanical, not cosmetic. Lineage confidence is
 computed from the raw contributing records (not the aggregated series), defaults to the unsafe
 (lowest-confidence) state on missing or corrupt lineage data, and is wired through a single
-chokepoint (`forecast_node`/`recommendation_node`) rather than re-implemented per consumer.
+chokepoint (`forecast_node`/`recommendation_node`) rather than re-implemented per consumer. A
+lineage report is also bound to the forecast's actual date-coverage window: a report covering an
+unrelated or incomplete window (a bug or a malicious domain plugin) falls back to the unsafe
+default rather than earning trust for history it isn't evidence about (an external adversarial
+review found this binding missing on first pass; see Change Log).
 
 **What this does not prove:** the tier weights (`1.0` / `0.4` / `0.0`) and the widen-factor
 formula are illustrative choices for this demonstration, not empirically validated against real
@@ -112,6 +116,12 @@ clinical operations or any production risk model. The mechanism covers the hero 
 (`daily_enrollment`) and the clinical stream only in this phase; extending it to the QC/supply
 streams or to other domains is deferred. This is a demonstration that a lineage signal *can*
 mechanically change a forecast's published trust posture, not a validated genealogy risk score.
+**Threat model, stated plainly:** the engine enforces date-coverage generically (any domain), but
+cannot in general detect a domain that covers every date while silently omitting *some* records
+for an otherwise-covered day: closing that fully requires a domain's `lineage_extract` to derive
+from the exact same validated rows its `hero_frame`/`extract` aggregate, which is a stated,
+tested requirement for pharma (see `orgpulse/core/domain.py`'s `lineage_extract` docstring) but
+not something the engine can verify for an arbitrary domain.
 
 ## What it demonstrates
 
@@ -130,6 +140,6 @@ mechanically change a forecast's published trust posture, not a validated geneal
 | Data streams | 3 (clinical hero + QC + supply) |
 | Analysis DAG | 4 nodes (LangGraph) |
 | Forecast horizons | 30 / 60 / 90 days, 90% in-sample-calibrated interval |
-| Tests | 318, keyless & offline |
+| Tests | 334, keyless & offline |
 | External adversarial review rounds | 9 (all findings fixed & reproduction-verified; round 5 forced a redesign) |
 | Deployed dashboard deps | 3 (`streamlit`, `pandas`, `plotly`) |

@@ -121,7 +121,7 @@ Anthropic Claude (reasoning, optional) · Hermes (autonomy/scheduling) · Stream
 ## Tests
 
 ```bash
-uv run pytest -q      # 318 passing
+uv run pytest -q      # 334 passing
 ```
 
 Keyless and offline: no test needs `ANTHROPIC_API_KEY` or network access. The suite was
