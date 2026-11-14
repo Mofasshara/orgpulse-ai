@@ -23,6 +23,16 @@ def generate_clinical(
         raise ValueError("days must be >= 1")
     if n_sites < 1:
         raise ValueError("n_sites must be >= 1")
+    for label, ids in (("paper_site_ids", paper_site_ids), ("missing_source_site_ids", missing_source_site_ids)):
+        # Site ids are only ever `range(n_sites)` members, i.e. real ints. A NaN or non-integral
+        # float passes `0 <= x < n_sites` vacuously (NaN compares False to everything; 0.5 sits
+        # inside the range without matching any int site_id), silently making the requested
+        # degradation a no-op -- every row then reads system_of_record. Reject before range
+        # checking, not after: a type violation isn't a range violation. bool is technically an
+        # int subclass but not a real site id (matches this codebase's established pattern).
+        bad_type = {i for i in ids if isinstance(i, bool) or not isinstance(i, int)}
+        if bad_type:
+            raise ValueError(f"{label} contains non-integer site id(s) {sorted(bad_type, key=repr)}")
     overlap = paper_site_ids & missing_source_site_ids
     if overlap:
         raise ValueError(f"site id(s) {sorted(overlap)} cannot be both paper and missing-source")

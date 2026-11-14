@@ -41,6 +41,9 @@ def test_paper_and_missing_site_ids_tag_correctly():
     (frozenset({8}), frozenset()),          # out of range (n_sites=8, valid ids 0..7)
     (frozenset({-1}), frozenset()),         # negative
     (frozenset({0}), frozenset({0})),       # overlap
+    (frozenset({float("nan")}), frozenset()),  # Codex r1 Important: NaN evades both range
+    (frozenset({0.5}), frozenset()),           # comparisons; 0.5 passes 0<=x<n_sites vacuously
+    (frozenset({True}), frozenset()),          # bool is technically int but not a real site id
 ])
 def test_rejects_bad_site_tier_config(paper, missing):
     with pytest.raises(ValueError):
