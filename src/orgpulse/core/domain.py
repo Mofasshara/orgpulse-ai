@@ -88,6 +88,19 @@ class Domain:
     # no lineage block is published (not an unsafe state, since nothing was claimed). A domain
     # that DOES implement this and then fails to deliver usable data at run time falls back to
     # the unsafe low-confidence default (see orgpulse.lineage.lineage_confidence).
+    #
+    # THREAT MODEL (stated honestly, per this engine's contract): lineage_extract is UNTRUSTED
+    # domain code, same as extract/hero_frame. The engine enforces DATE-COVERAGE: a lineage
+    # report that doesn't cover every date the forecast was fit on falls back to the unsafe
+    # default (forecast_node checks this). The engine CANNOT, in general, detect a domain that
+    # covers every date but silently omits SOME contributing records for an otherwise-covered
+    # day (e.g. drops one degraded site's rows while another site's row keeps the date present) —
+    # closing that fully requires the domain's own implementation to derive lineage_extract's
+    # output from the EXACT SAME validated row set its extract/hero_frame aggregate, not an
+    # independently re-derived view. This is a REQUIRED property for a domain to earn a genuine
+    # guarantee here, not an incidental detail: pharma's implementation satisfies it (see
+    # tests/domains/test_pharma_domain.py's row-for-row binding test); a new domain implementing
+    # lineage_extract must do the same or its lineage claim is weaker than it looks.
     lineage_extract: Callable[[dict], tuple] | None = None
     # OFFLINE (keyless) framing: the deterministic stub can't be prompted, so the domain supplies
     # its own language. `offline_framing` completes the analyst sentence; `offline_recommend`

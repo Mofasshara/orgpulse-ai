@@ -235,6 +235,18 @@ def forecast_node(state: PipelineState, domain: Domain = PHARMA) -> ForecastNode
             try:
                 raw_dates, raw_tiers = domain.lineage_extract(streams)
                 lineage_result = lineage_confidence(raw_dates, raw_tiers)
+                if lineage_result != UNSAFE_LINEAGE:
+                    # Coverage binding: lineage_extract is UNTRUSTED domain code, same as
+                    # extract/hero_frame elsewhere in this function -- a buggy or malicious
+                    # implementation could return data from an unrelated window, or silently
+                    # drop whole days, while the forecast was actually built on the full
+                    # history. A lineage result that doesn't COVER every date this forecast
+                    # was fit on is not evidence ABOUT this forecast; reject it to the unsafe
+                    # default rather than letting a disconnected or partial report earn trust.
+                    forecast_dates = set(pd.to_datetime(daily_df["ds"]).dt.normalize())
+                    lineage_dates = set(pd.to_datetime(pd.Series(list(raw_dates))).dt.normalize())
+                    if not forecast_dates.issubset(lineage_dates):
+                        lineage_result = UNSAFE_LINEAGE
             except Exception:
                 lineage_result = UNSAFE_LINEAGE
             lineage_meta = {

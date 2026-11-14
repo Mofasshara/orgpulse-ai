@@ -43,6 +43,21 @@ def test_make_pharma_domain_with_paper_sites_tags_degraded_tier():
     assert degraded.hero() == PHARMA.hero()   # same KPI config, only lineage differs
 
 
+def test_pharma_lineage_extract_is_row_for_row_bound_to_the_raw_clinical_frame():
+    # Codex r1 Critical: the engine-level coverage check only binds lineage to the forecast's
+    # DATE window; it cannot, in general, detect a domain that drops SOME rows for an
+    # otherwise-covered day. Pharma's own implementation must close that gap by construction:
+    # prove lineage_extract returns the clinical frame's OWN columns, row-for-row and in
+    # order, not an independently re-derived view that could silently diverge (e.g. omit one
+    # site's rows while keeping the date present via another site's row).
+    degraded = make_pharma_domain(paper_site_ids=frozenset({2}))
+    streams = degraded.generate(date(2026, 1, 1), 200, seed=42)
+    clinical = streams["clinical"]
+    dates, tiers = degraded.lineage_extract(streams)
+    assert list(dates) == list(clinical["date"].to_numpy())
+    assert list(tiers) == list(clinical["source_tier"].to_numpy())
+
+
 def test_pharma_lineage_caveat_is_a_nonempty_pharma_framed_string():
     text = PHARMA.lineage_caveat("daily_enrollment")
     assert isinstance(text, str) and text.strip()

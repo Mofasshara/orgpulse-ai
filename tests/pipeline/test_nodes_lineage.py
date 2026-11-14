@@ -78,6 +78,58 @@ def test_forecast_node_falls_back_to_unsafe_lineage_when_tiers_are_unrecognized(
     assert lineage["low_trust"] is True
 
 
+def test_forecast_node_rejects_lineage_that_does_not_cover_the_forecast_window():
+    # Codex r1 Critical: a domain's lineage_extract is untrusted (same class as extract/
+    # hero_frame) and could return data from an unrelated window while the real history
+    # contains a degraded site. A single clean record dated decades before the actual
+    # forecast window must not be treated as evidence ABOUT that window.
+    from dataclasses import replace
+    import numpy as np
+    degraded = make_pharma_domain(paper_site_ids=frozenset({0, 1, 2}))
+    streams = _streams(degraded)
+
+    def _stale_single_record(streams):
+        return np.array(["1900-01-01"], dtype="datetime64[ns]"), ["system_of_record"]
+
+    lying_domain = replace(degraded, lineage_extract=_stale_single_record)
+    kfs = detect_node({"streams": streams}, lying_domain)["kpi_findings"]
+    out = forecast_node({"streams": streams, "kpi_findings": kfs}, lying_domain)
+    lineage = out["forecast"]["daily_enrollment"]["lineage"]
+    assert lineage["confidence"] == 0.0
+    assert lineage["low_trust"] is True
+
+
+def test_forecast_node_rejects_lineage_missing_some_forecast_window_dates():
+    # Partial coverage (most dates present, a chunk of the window missing) must also fail
+    # unsafe, not just total mismatch -- the forecast used those missing dates' data too.
+    from dataclasses import replace
+    degraded = make_pharma_domain(paper_site_ids=frozenset({0, 1, 2}))
+    streams = _streams(degraded)
+
+    def _partial_coverage(streams):
+        dates, tiers = degraded.lineage_extract(streams)
+        # Drop every record from the first 30 days -- a real but incomplete lineage report.
+        cutoff = sorted(set(dates))[30]
+        keep = [i for i, d in enumerate(dates) if d >= cutoff]
+        return dates[keep], [tiers[i] for i in keep]
+
+    partial_domain = replace(degraded, lineage_extract=_partial_coverage)
+    kfs = detect_node({"streams": streams}, partial_domain)["kpi_findings"]
+    out = forecast_node({"streams": streams, "kpi_findings": kfs}, partial_domain)
+    lineage = out["forecast"]["daily_enrollment"]["lineage"]
+    assert lineage["confidence"] == 0.0
+    assert lineage["low_trust"] is True
+
+
+def test_forecast_node_accepts_lineage_that_fully_covers_the_forecast_window():
+    # Full-coverage lineage (the normal production case) must NOT be rejected by the
+    # coverage check -- confirms the check isn't over-strict.
+    out = forecast_node(_state(PHARMA), PHARMA)
+    lineage = out["forecast"]["daily_enrollment"]["lineage"]
+    assert lineage["confidence"] == 1.0
+    assert lineage["low_trust"] is False
+
+
 def _calm_state_with_lineage(low_trust: bool):
     return {
         "kpi_findings": [KpiFinding(kpi="daily_enrollment", severity="SAFE", detail="d", latest_value=1.0)],
