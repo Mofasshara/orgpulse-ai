@@ -32,6 +32,7 @@ def test_per_day_minimum_then_mean_across_days():
     (pd.date_range("2026-01-01", periods=3), ["system_of_record"]),       # length mismatch
     (pd.date_range("2026-01-01", periods=2), ["system_of_record", "typo_tier"]),  # unknown tier
     ([pd.NaT, "2026-01-02"], ["system_of_record", "system_of_record"]),   # unparseable date
+    (pd.date_range("2026-01-01", periods=2), [["system_of_record"], ["missing"]]),  # unhashable tier
 ])
 def test_missing_or_corrupt_lineage_data_is_unsafe(dates, tiers):
     r = lineage_confidence(dates, tiers)

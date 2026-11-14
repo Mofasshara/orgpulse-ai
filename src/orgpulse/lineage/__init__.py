@@ -62,28 +62,33 @@ def lineage_confidence(dates, tiers) -> LineageResult:
     """
     if dates is None or tiers is None:
         return UNSAFE_LINEAGE
+    # This chokepoint must NEVER raise (same "a gate always returns a result" contract as every
+    # other fail-safe gate in this codebase) -- not just because callers happen to guard it
+    # today. Wrap the whole computation: a nested/unhashable tier value (e.g. a list instead of
+    # a string) raises TypeError at `set(t)`; anything else malformed enough to slip past the
+    # checks above is equally not our problem to diagnose, only to fail safe on.
     try:
         d = pd.to_datetime(pd.Series(list(dates)))
         t = pd.Series(list(tiers))
-    except (ValueError, TypeError):
-        return UNSAFE_LINEAGE
-    if len(d) != len(t) or len(d) == 0:
-        return UNSAFE_LINEAGE
-    if d.isna().any():
-        return UNSAFE_LINEAGE
-    unknown = set(t) - set(TIER_WEIGHT)
-    if unknown:
-        return UNSAFE_LINEAGE
+        if len(d) != len(t) or len(d) == 0:
+            return UNSAFE_LINEAGE
+        if d.isna().any():
+            return UNSAFE_LINEAGE
+        unknown = set(t) - set(TIER_WEIGHT)
+        if unknown:
+            return UNSAFE_LINEAGE
 
-    weights = t.map(TIER_WEIGHT)
-    day_weight = weights.groupby(d.dt.normalize().to_numpy()).min()
-    confidence = float(day_weight.mean())
-    tier_counts = {tier: int((t == tier).sum()) for tier in TIER_WEIGHT}
-    low_trust = confidence < LOW_TRUST_THRESHOLD
-    widen_factor = 1.0 + MAX_EXTRA_WIDEN * (1.0 - confidence)
-    pct_degraded = 100.0 * (1.0 - float((t == SourceTier.SYSTEM_OF_RECORD.value).mean()))
-    reason = (
-        f"{pct_degraded:.0f}% of contributing records are not from a verified system of record "
-        f"(confidence={confidence:.2f})"
-    )
-    return LineageResult(confidence, tier_counts, reason, low_trust, widen_factor)
+        weights = t.map(TIER_WEIGHT)
+        day_weight = weights.groupby(d.dt.normalize().to_numpy()).min()
+        confidence = float(day_weight.mean())
+        tier_counts = {tier: int((t == tier).sum()) for tier in TIER_WEIGHT}
+        low_trust = confidence < LOW_TRUST_THRESHOLD
+        widen_factor = 1.0 + MAX_EXTRA_WIDEN * (1.0 - confidence)
+        pct_degraded = 100.0 * (1.0 - float((t == SourceTier.SYSTEM_OF_RECORD.value).mean()))
+        reason = (
+            f"{pct_degraded:.0f}% of contributing records are not from a verified system of record "
+            f"(confidence={confidence:.2f})"
+        )
+        return LineageResult(confidence, tier_counts, reason, low_trust, widen_factor)
+    except (ValueError, TypeError, OverflowError):
+        return UNSAFE_LINEAGE
