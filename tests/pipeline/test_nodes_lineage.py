@@ -153,6 +153,25 @@ def test_high_trust_hero_does_not_add_lineage_risk_recommendation():
     assert not any(r.capa_frame == "LINEAGE-RISK" for r in out["recommendations"])
 
 
+def test_llm_recommendation_cannot_collide_with_the_reserved_lineage_risk_frame():
+    # Codex r1 Minor: an LLM-authored (or offline-stub) recommendation for the hero's
+    # statistical anomaly could itself claim capa_frame="LINEAGE-RISK", colliding with the
+    # deterministic entry recommendation_node appends for low-trust lineage -- two ambiguous
+    # duplicate (kpi, capa_frame) cards for the same finding.
+    class _CollidingLLM:
+        def recommend(self, system, prompt, kpis):
+            return [{"kpi": kpis[0], "text": "an LLM-authored note",
+                      "capa_frame": "LINEAGE-RISK"}]
+
+    state = _calm_state_with_lineage(True)
+    state["kpi_findings"] = [KpiFinding(kpi="daily_enrollment", severity="WARNING", detail="d", latest_value=1.0)]
+    state["overall_severity"] = "WARNING"
+    out = recommendation_node(state, _CollidingLLM(), PHARMA)
+    matches = [r for r in out["recommendations"]
+               if r.kpi == "daily_enrollment" and r.capa_frame == "LINEAGE-RISK"]
+    assert len(matches) == 1
+
+
 def test_lineage_risk_recommendation_coexists_with_an_anomaly_recommendation():
     llm = make_llm(offline=True, domain=PHARMA)
     state = _calm_state_with_lineage(True)

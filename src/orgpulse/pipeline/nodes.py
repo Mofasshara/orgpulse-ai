@@ -31,6 +31,13 @@ from orgpulse.pipeline.state import (
     data_quality_finding,
 )
 
+# capa_frame sentinels this engine appends deterministically (DATA-QUALITY for the dq_kpis
+# loop, LINEAGE-RISK for low-trust hero lineage below). An LLM-authored or offline-stub
+# recommendation claiming one of these would collide with the engine's own deterministic
+# entry, producing two ambiguous (kpi, capa_frame) cards for the same finding -- reserved,
+# not available to domain-callable/LLM output.
+_RESERVED_CAPA_FRAMES = frozenset({"DATA-QUALITY", "LINEAGE-RISK"})
+
 
 def validated_clinical_daily(df: pd.DataFrame) -> pd.DataFrame:
     """Validate RAW clinical rows before aggregating to a daily series — the single builder
@@ -389,7 +396,8 @@ def recommendation_node(state: PipelineState, llm: LLMClient, domain: Domain = P
             kpi, text, frame = rec_dict.get("kpi"), rec_dict.get("text"), rec_dict.get("capa_frame")
             if not (isinstance(kpi, str) and kpi in requested
                     and isinstance(text, str) and text.strip()
-                    and isinstance(frame, str) and frame.strip()):
+                    and isinstance(frame, str) and frame.strip()
+                    and frame not in _RESERVED_CAPA_FRAMES):
                 continue
             recommendations.append(
                 Recommendation(
