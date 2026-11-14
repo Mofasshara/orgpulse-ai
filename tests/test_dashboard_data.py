@@ -361,7 +361,7 @@ def test_schema_rejects_confidence_out_of_range():
 def test_schema_rejects_low_trust_without_alert_or_without_lineage_risk_rec():
     hero = {"h30": {"yhat": 1, "lower": 0, "upper": 2}, "h60": {"yhat": 1, "lower": 0, "upper": 2},
             "h90": {"yhat": 1, "lower": 0, "upper": 2},
-            "lineage": {"confidence": 0.1, "tier_counts": {}, "reason": "x", "low_trust": True, "widen_factor": 1.9}}
+            "lineage": {"confidence": 0.1, "tier_counts": {"system_of_record": 2, "missing": 8}, "reason": "x", "low_trust": True, "widen_factor": 1.9}}
     # alert True but no LINEAGE-RISK rec
     fj = _base_findings(forecast={"daily_enrollment": hero}, alert=True)
     assert _findings_schema_reason(fj) is not None
@@ -377,7 +377,7 @@ def test_schema_rejects_low_trust_without_alert_or_without_lineage_risk_rec():
 def test_schema_accepts_consistent_low_trust_artifact():
     hero = {"h30": {"yhat": 1, "lower": 0, "upper": 2}, "h60": {"yhat": 1, "lower": 0, "upper": 2},
             "h90": {"yhat": 1, "lower": 0, "upper": 2},
-            "lineage": {"confidence": 0.1, "tier_counts": {}, "reason": "x", "low_trust": True, "widen_factor": 1.9}}
+            "lineage": {"confidence": 0.1, "tier_counts": {"system_of_record": 2, "missing": 8}, "reason": "x", "low_trust": True, "widen_factor": 1.9}}
     fj = _base_findings(
         forecast={"daily_enrollment": hero}, alert=True,
         recommendations=[{"kpi": "daily_enrollment", "text": "t", "capa_frame": "LINEAGE-RISK",
@@ -403,7 +403,7 @@ def test_schema_rejects_low_trust_false_with_below_threshold_confidence():
     # overall_severity/alert derived-field checks already in this function.
     hero = {"h30": {"yhat": 1, "lower": 0, "upper": 2}, "h60": {"yhat": 1, "lower": 0, "upper": 2},
             "h90": {"yhat": 1, "lower": 0, "upper": 2},
-            "lineage": {"confidence": 0.1, "tier_counts": {}, "reason": "x", "low_trust": False, "widen_factor": 1.0}}
+            "lineage": {"confidence": 0.1, "tier_counts": {"system_of_record": 2, "missing": 8}, "reason": "x", "low_trust": False, "widen_factor": 1.0}}
     fj = _base_findings(forecast={"daily_enrollment": hero})
     assert _findings_schema_reason(fj) is not None
 
@@ -435,3 +435,55 @@ def test_dashboard_lineage_threshold_constants_match_orgpulse_lineage():
     from orgpulse.lineage import LOW_TRUST_THRESHOLD, MAX_EXTRA_WIDEN
     assert data._LOW_TRUST_THRESHOLD == LOW_TRUST_THRESHOLD
     assert data._MAX_EXTRA_WIDEN == MAX_EXTRA_WIDEN
+
+
+def test_schema_rejects_full_confidence_with_degraded_tier_counts():
+    # Codex r1 Important: tier_counts only had its VALUE types checked, never cross-checked
+    # against confidence. A producer bug claiming full confidence while reporting degraded
+    # records contradicts the formula (any degraded-tier record caps that day's weight below
+    # 1.0, so confidence==1.0 is only possible when every record is system_of_record).
+    hero = {"h30": {"yhat": 1, "lower": 0, "upper": 2}, "h60": {"yhat": 1, "lower": 0, "upper": 2},
+            "h90": {"yhat": 1, "lower": 0, "upper": 2},
+            "lineage": {"confidence": 1.0, "tier_counts": {"missing": 2080}, "reason": "x",
+                        "low_trust": False, "widen_factor": 1.0}}
+    fj = _base_findings(forecast={"daily_enrollment": hero})
+    assert _findings_schema_reason(fj) is not None
+
+
+def test_schema_rejects_unknown_tier_names_in_tier_counts():
+    hero = {"h30": {"yhat": 1, "lower": 0, "upper": 2}, "h60": {"yhat": 1, "lower": 0, "upper": 2},
+            "h90": {"yhat": 1, "lower": 0, "upper": 2},
+            "lineage": {"confidence": 0.5, "tier_counts": {"fabricated_tier": 10}, "reason": "x",
+                        "low_trust": True, "widen_factor": 1.5}}
+    fj = _base_findings(
+        forecast={"daily_enrollment": hero}, alert=True,
+        recommendations=[{"kpi": "daily_enrollment", "text": "t", "capa_frame": "LINEAGE-RISK",
+                           "review_status": "PENDING_HUMAN_REVIEW", "disclaimer": "d"}],
+    )
+    assert _findings_schema_reason(fj) is not None
+
+
+def test_schema_rejects_empty_tier_counts_with_nonzero_confidence():
+    # Empty tier_counts is only legitimate for the canonical "lineage data unavailable"
+    # artifact (confidence=0.0) -- empty evidence can't support any other confidence value.
+    hero = {"h30": {"yhat": 1, "lower": 0, "upper": 2}, "h60": {"yhat": 1, "lower": 0, "upper": 2},
+            "h90": {"yhat": 1, "lower": 0, "upper": 2},
+            "lineage": {"confidence": 1.0, "tier_counts": {}, "reason": "x",
+                        "low_trust": False, "widen_factor": 1.0}}
+    fj = _base_findings(forecast={"daily_enrollment": hero})
+    assert _findings_schema_reason(fj) is not None
+
+
+def test_schema_accepts_the_canonical_unsafe_lineage_profile():
+    # The real "lineage_extract failed" artifact DOES have empty tier_counts paired with
+    # confidence=0.0 -- must not be rejected by the new checks.
+    hero = {"h30": {"yhat": 1, "lower": 0, "upper": 2}, "h60": {"yhat": 1, "lower": 0, "upper": 2},
+            "h90": {"yhat": 1, "lower": 0, "upper": 2},
+            "lineage": {"confidence": 0.0, "tier_counts": {}, "reason": "x",
+                        "low_trust": True, "widen_factor": 2.0}}
+    fj = _base_findings(
+        forecast={"daily_enrollment": hero}, alert=True,
+        recommendations=[{"kpi": "daily_enrollment", "text": "t", "capa_frame": "LINEAGE-RISK",
+                           "review_status": "PENDING_HUMAN_REVIEW", "disclaimer": "d"}],
+    )
+    assert _findings_schema_reason(fj) is None

@@ -24,6 +24,9 @@ _SEVERITIES = {"SAFE", "WARNING", "CRITICAL", "DATA_QUALITY"}
 # (anti-drift guard, same pattern as verify_audit vs orgpulse.governance.audit).
 _LOW_TRUST_THRESHOLD = 0.8
 _MAX_EXTRA_WIDEN = 1.0
+# The three tier names orgpulse.lineage.SourceTier defines; duplicated for the same
+# split-plane reason as the thresholds above (tests/test_dashboard_data.py proves agreement).
+_KNOWN_LINEAGE_TIERS = {"system_of_record", "manual_scanned", "missing"}
 
 
 def _sha256(text: str) -> str:
@@ -221,6 +224,25 @@ def _findings_schema_reason(fj: dict) -> str | None:
                 isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in tc.values()
             )):
                 return "forecast lineage tier_counts is not a dict of non-negative integers"
+            if not (set(tc) <= _KNOWN_LINEAGE_TIERS):
+                return "forecast lineage tier_counts has unrecognized tier name(s)"
+            # Soundness, not just shape: tier_counts is the EVIDENCE confidence was computed
+            # from, not an independent field. The day-level-minimum-then-mean formula makes two
+            # relationships mathematically certain, so a hash-consistent artifact that violates
+            # either is a producer bug, not a legitimate result:
+            degraded = sum(v for k, v in tc.items() if k != "system_of_record")
+            if lineage["confidence"] >= 1.0 - 1e-9 and degraded > 0:
+                # (1) confidence==1.0 is only reachable when EVERY contributing record is
+                # system_of_record (any degraded-tier record caps that record's whole day
+                # below 1.0). Reported full confidence next to reported degraded evidence is
+                # exactly "low-trust data rendered as trusted" -- the failure this layer exists
+                # to prevent.
+                return "forecast lineage confidence is 1.0 but tier_counts reports degraded-tier records"
+            if not tc and lineage["confidence"] > 1e-9:
+                # (2) empty tier_counts means NO evidence was available at all -- legitimate
+                # only for the canonical "lineage data unavailable" result, which always
+                # publishes confidence=0.0. Empty evidence cannot support any other confidence.
+                return "forecast lineage tier_counts is empty but confidence is not 0.0"
             if not (isinstance(lineage.get("reason"), str) and lineage["reason"].strip()):
                 return "forecast lineage reason is not a non-empty string"
             if not isinstance(lineage.get("low_trust"), bool):
